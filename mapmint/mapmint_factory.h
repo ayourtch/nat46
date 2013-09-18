@@ -157,8 +157,9 @@ static inline void factory_translate_ip6(struct sk_buff *src, struct sk_buff *ds
 	iph->frag_off	= payload_len > 1280 ? htons(IP_DF) : 0;
 	iph->ttl	= ip6h->hop_limit;
 	iph->protocol	= protocol;
-	iph->saddr	= extract_ipv4(ip6h->saddr, local_prefix_len);
-	iph->daddr	= extract_ipv4(ip6h->daddr, prefix_len);
+	/* AYXX: order fixed. */
+	iph->saddr	= extract_ipv4(ip6h->saddr, dmr_prefix_len);
+	iph->daddr	= extract_ipv4(ip6h->daddr, local_prefix_len);
 
 	/*	Calculate IP header checksum	*/
 	ip_send_check(iph);

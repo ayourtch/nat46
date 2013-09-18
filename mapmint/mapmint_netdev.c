@@ -32,7 +32,7 @@ static int nat64_netdev_up(struct net_device *dev)
 		.fc_metric = IP6_RT_PRIO_ADDRCONF,
 		.fc_ifindex = dev->ifindex,
 		.fc_expires = 0,
-		.fc_dst_len = prefix_len,
+		.fc_dst_len = dmr_prefix_len,
 		.fc_flags = RTF_UP | RTF_NONEXTHOP,
 		.fc_nlinfo.nl_net = dev_net(dev),
 		.fc_protocol = RTPROT_KERNEL,
@@ -41,7 +41,7 @@ static int nat64_netdev_up(struct net_device *dev)
 	netif_start_queue(dev);
 	printk("nat64: the device is going up, you shoud automagically add nat64 prefix route :).\n");
 	
-	ipv6_addr_copy(&cfg.fc_dst, &prefix_base);
+	ipv6_addr_copy(&cfg.fc_dst, &dmr_prefix_base);
 	// ip6_route_add(&cfg);
 	return 0;
 }

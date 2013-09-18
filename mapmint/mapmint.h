@@ -74,11 +74,13 @@ extern __be32			ipv4_addr;
 extern __be32			ipv4_netmask;
 extern int			ipv4_prefixlen;
 
-extern int			prefix_len;
-extern struct in6_addr		prefix_base;
+extern int			dmr_prefix_len;
+extern struct in6_addr		dmr_prefix_base;
 
 extern int			local_prefix_len;
 extern struct in6_addr		local_prefix_base;
+
+extern int			psid;
 
 void nat64_ipv6_input(struct sk_buff *old_skb);
 unsigned int nat64_ipv4_input(struct sk_buff *skb);
@@ -132,12 +134,27 @@ static inline __be32 extract_ipv4(struct in6_addr addr, int prefix)
 	}
 }
 
-static inline void assemble_ipv6(struct in6_addr *dest, __be32 addr)
+static inline void assemble_ipv6_bmr(struct in6_addr *dest, __be32 addr)
 {
-	memcpy(dest, &prefix_base, sizeof(prefix_base));
-	switch(prefix_len) {
+	memcpy(dest, &dmr_prefix_base, sizeof(dmr_prefix_base));
+	switch(dmr_prefix_len) {
 	case 96:
 		dest->s6_addr32[3] = addr;
 		break;
 	}
+}
+
+static inline void assemble_ipv6_local(struct in6_addr *dest, __be32 addr)
+{
+	memcpy(dest, &local_prefix_base, sizeof(local_prefix_base));
+	dest->s6_addr16[5] = (addr >> 16);
+	dest->s6_addr16[6] = (addr & 0xffff);
+	dest->s6_addr16[7] = psid;
+/*
+	switch(local_prefix_len) {
+	case 96:
+		dest->s6_addr32[3] = addr;
+		break;
+	}
+*/
 }

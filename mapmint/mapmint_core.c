@@ -29,8 +29,8 @@
 #define NAT64_NETDEV_NAME "mapmint"
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>, Julius Kriukas <julius.kriukas@gmail.com>");
-MODULE_DESCRIPTION("Linux MAP-T stateless translation portion implementation");
+MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>, originally by Julius Kriukas <julius.kriukas@gmail.com>");
+MODULE_DESCRIPTION("Linux MAP(min)-T stateless translation portion implementation");
 
 struct kmem_cache	*session_cache;
 struct kmem_cache	*bib_cache;
@@ -62,23 +62,27 @@ static char			*ipv4_address = NULL;
 module_param(ipv4_address, charp, 0);
 MODULE_PARM_DESC(ipv4_address, "MAP-T IPv4 public address.");
 
-struct in6_addr		prefix_base = {.s6_addr32[0] = 0, .s6_addr32[1] = 0, .s6_addr32[2] = 0, .s6_addr32[3] = 0};
-static char			*prefix_address = "0064:FF9B::";
-module_param(prefix_address, charp, 0);
-MODULE_PARM_DESC(prefix_address, "MAP-T Default Mapping Rule (default 64:FF9B::)");
+struct in6_addr		dmr_prefix_base = {.s6_addr32[0] = 0, .s6_addr32[1] = 0, .s6_addr32[2] = 0, .s6_addr32[3] = 0};
+static char			*dmr_prefix_address = "0064:FF9B::";
+module_param(dmr_prefix_address, charp, 0);
+MODULE_PARM_DESC(dmr_prefix_address, "MAP-T Default Mapping Rule (default 64:FF9B::)");
 
-int			prefix_len = 96;
-module_param(prefix_len, int, 0);
-MODULE_PARM_DESC(prefix_len, "DMR prefix length (default /96)");
+int			dmr_prefix_len = 96;
+module_param(dmr_prefix_len, int, 0);
+MODULE_PARM_DESC(dmr_prefix_len, "DMR prefix length (default /96)");
 
 struct in6_addr		local_prefix_base = {.s6_addr32[0] = 0, .s6_addr32[1] = 0, .s6_addr32[2] = 0, .s6_addr32[3] = 0};
 static char			*local_prefix_address = "2001:db8::";
 module_param(local_prefix_address, charp, 0);
-MODULE_PARM_DESC(local_prefix_address, "Local IPv6 prefix (default 64:FF9B::)");
+MODULE_PARM_DESC(local_prefix_address, "Local IPv6 prefix (default 2001:db8::)");
 
 int			local_prefix_len = 96;
 module_param(local_prefix_len, int, 0);
 MODULE_PARM_DESC(local_prefix_len, "local prefix length (default /96)");
+
+int			psid = 0;
+module_param(psid, int, 0);
+MODULE_PARM_DESC(psid, "port set ID (default 0)");
 
 #define IPV6_PREF_LEN (5*8+1+3)
 #define MAX_PROC_SIZE ((4*IPV6_PREF_LEN)+100)
@@ -88,7 +92,7 @@ static struct proc_dir_entry *proc_write_entry;
 
 int read_proc(char *buf,char **start,off_t offset,int count,int *eof,void *data ) {
 	int len=0;
-	len = sprintf(buf,"dmr=%s/%d\n", prefix_address, prefix_len );
+	len = sprintf(buf,"dmr=%s/%d\n", dmr_prefix_address, dmr_prefix_len );
 	len += sprintf(&buf[len],"v6=%s/%d\n", local_prefix_address, local_prefix_len );
 	len += sprintf(&buf[len],"v4=%s/%d\n", ipv4_address, ipv4_prefixlen );
 
@@ -222,7 +226,7 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 	}
 
 	// Check if destination address falls into nat64 prefix
-	if(memcmp(&ip6h->daddr, &prefix_base, prefix_len / 8))
+	if(memcmp(&ip6h->daddr, &dmr_prefix_base, dmr_prefix_len / 8))
 		return;
 
 	skb_pull(old_skb, sizeof(struct ipv6hdr));
@@ -303,11 +307,11 @@ static void nat64_translate_4to6_deep(struct sk_buff *old_skb, __be16 sport)
 		break;
 	}
 
-	assemble_ipv6(&remote6, iph->daddr);
-	assemble_ipv6(&local6, iph->saddr);
+	assemble_ipv6_bmr(&remote6, iph->daddr);
+	assemble_ipv6_local(&local6, iph->saddr);
 	factory_translate_ip4(old_skb, skb, &local6, &remote6, iph->protocol, iph->ihl * 4);
 	factory_clone_icmp(old_skb, skb, sport);
-	assemble_ipv6(&remote6, ip_hdr(old_skb)->saddr);
+	assemble_ipv6_bmr(&remote6, ip_hdr(old_skb)->saddr); 
 	factory_translate_ip4(old_skb, skb, &remote6, &local6, IPPROTO_ICMPV6, ip_hdrlen(old_skb));
 
 	skb->dev = nat64_dev;
@@ -358,8 +362,8 @@ static void nat64_translate_4to6(struct sk_buff *old_skb, __be16 sport, int prot
 		factory_clone_icmp(old_skb, skb, sport);
 		break;
 	}
-	assemble_ipv6(&remote6, ip_hdr(old_skb)->saddr);
-	assemble_ipv6(&local6, ip_hdr(old_skb)->daddr);
+	assemble_ipv6_local(&remote6, ip_hdr(old_skb)->saddr);
+	assemble_ipv6_bmr(&local6, ip_hdr(old_skb)->daddr);
 	factory_translate_ip4(old_skb, skb, &remote6, &local6, proto, ip_hdrlen(old_skb));
 
 	skb->dev = nat64_dev;
@@ -699,15 +703,23 @@ static int __init nat64_init(void)
 	}
 
 
-	ret = in6_pton(prefix_address, -1, (u8 *)&prefix_base, '\0', NULL);
+	ret = in6_pton(dmr_prefix_address, -1, (u8 *)&dmr_prefix_base, '\0', NULL);
 	if (!ret)
 	{
-		printk("nat64: prefix address is malformed [%s] X(.\n", prefix_address);
+		printk("nat64: prefix address is malformed [%s] X(.\n", dmr_prefix_address);
 		ret = -1;
 		goto error;
 	}
 
-	printk("nat64: translating %s/%d to %s\n", prefix_address, prefix_len, ipv4_address);
+	ret = in6_pton(local_prefix_address, -1, (u8 *)&local_prefix_base, '\0', NULL);
+	if (!ret)
+	{
+		printk("nat64: local prefix address is malformed [%s] X(.\n", local_prefix_address);
+		ret = -1;
+		goto error;
+	}
+
+	printk("nat64: translating %s/%d to %s\n", dmr_prefix_address, dmr_prefix_len, ipv4_address);
 	nat64_v4_dev = find_netdev_by_ip(ipv4_addr);
 
 	if(nat64_v4_dev) {
@@ -768,6 +780,7 @@ static void __exit nat64_exit(void)
 	nat64_netdev_destroy(nat64_dev);
 
         remove_proc_entry("mapmint", NULL);
+	printk("mapmint: Removed proc entry\n");
 
 	if(nat64_v4_dev)
 		nf_unregister_hook(&nat64_nf_hook);
