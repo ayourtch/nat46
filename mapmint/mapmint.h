@@ -126,7 +126,8 @@ static inline __be32 extract_ipv4(struct in6_addr addr, int prefix)
 	case 56:
 		return 0;	//FIXME
 	case 64:
-		return 0;	//FIXME
+		return (((((addr.s6_addr[12] << 8) + addr.s6_addr[11]) << 8) + addr.s6_addr[10]) << 8) + addr.s6_addr[9]; 
+		//return 0;	//FIXME
 	case 96:
 		return addr.s6_addr32[3];
 	default:
@@ -138,6 +139,12 @@ static inline void assemble_ipv6_bmr(struct in6_addr *dest, __be32 addr)
 {
 	memcpy(dest, &dmr_prefix_base, sizeof(dmr_prefix_base));
 	switch(dmr_prefix_len) {
+	case 64:
+		dest->s6_addr[9] = (addr & 0xff);
+		dest->s6_addr[10] = (addr >> 8) & 0xff;
+		dest->s6_addr[11] = (addr >> 16) & 0xff;
+		dest->s6_addr[12] = (addr >> 24);
+		break;
 	case 96:
 		dest->s6_addr32[3] = addr;
 		break;
@@ -147,6 +154,12 @@ static inline void assemble_ipv6_bmr(struct in6_addr *dest, __be32 addr)
 static inline void assemble_ipv6_local(struct in6_addr *dest, __be32 addr)
 {
 	memcpy(dest, &local_prefix_base, sizeof(local_prefix_base));
+		dest->s6_addr[9] = (addr & 0xff);
+		dest->s6_addr[10] = (addr >> 8) & 0xff;
+		dest->s6_addr[11] = (addr >> 16) & 0xff;
+		dest->s6_addr[12] = (addr >> 24);
+	dest->s6_addr16[7] = psid;
+	return;
 	dest->s6_addr16[5] = (addr >> 16);
 	dest->s6_addr16[6] = (addr & 0xffff);
 	dest->s6_addr16[7] = psid;
