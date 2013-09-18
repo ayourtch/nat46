@@ -63,22 +63,22 @@ module_param(ipv4_address, charp, 0);
 MODULE_PARM_DESC(ipv4_address, "MAP-T IPv4 public address.");
 
 struct in6_addr		dmr_prefix_base = {.s6_addr32[0] = 0, .s6_addr32[1] = 0, .s6_addr32[2] = 0, .s6_addr32[3] = 0};
-static char			*dmr_prefix_address = "0064:FF9B::";
+static char			*dmr_prefix_address = "2001:db8:FFFF::";
 module_param(dmr_prefix_address, charp, 0);
-MODULE_PARM_DESC(dmr_prefix_address, "MAP-T Default Mapping Rule (default 64:FF9B::)");
+MODULE_PARM_DESC(dmr_prefix_address, "MAP-T Default Mapping Rule (default 2001:db8:ffff::)");
 
-int			dmr_prefix_len = 96;
+int			dmr_prefix_len = 64;
 module_param(dmr_prefix_len, int, 0);
-MODULE_PARM_DESC(dmr_prefix_len, "DMR prefix length (default /96)");
+MODULE_PARM_DESC(dmr_prefix_len, "DMR prefix length (default /64)");
 
 struct in6_addr		local_prefix_base = {.s6_addr32[0] = 0, .s6_addr32[1] = 0, .s6_addr32[2] = 0, .s6_addr32[3] = 0};
 static char			*local_prefix_address = "2001:db8::";
 module_param(local_prefix_address, charp, 0);
 MODULE_PARM_DESC(local_prefix_address, "Local IPv6 prefix (default 2001:db8::)");
 
-int			local_prefix_len = 96;
+int			local_prefix_len = 64;
 module_param(local_prefix_len, int, 0);
-MODULE_PARM_DESC(local_prefix_len, "local prefix length (default /96)");
+MODULE_PARM_DESC(local_prefix_len, "local prefix length (default /64)");
 
 int			psid = 0;
 module_param(psid, int, 0);
@@ -183,6 +183,7 @@ void inline nat64_handle_icmp6(struct sk_buff *skb, struct ipv6hdr *ip6h)
 
 	icmph = (struct icmphdr *)skb->data;
 	skb_pull(skb, sizeof(struct icmphdr));
+	printk("ICMP type: %d code %d\n", icmph->type, icmph->code);
 
 	if(icmph->type >> 7) {
 		// Informational ICMP
@@ -200,6 +201,10 @@ void inline nat64_handle_icmp6(struct sk_buff *skb, struct ipv6hdr *ip6h)
 		case ICMPV6_TIME_EXCEED:
 			printk("nat64: [icmp6] Time Exceeded ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
 			break;
+		case 1:
+			printk("nat64: [icmp6] Known ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
+			nat64_translate_6to4(skb, ICMP_DEST_UNREACH, IPPROTO_ICMP);
+			break;
 		default:
 			printk("nat64: [icmp6] Unknown ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
 		}
@@ -215,6 +220,8 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 	const struct tcphdr	*tcph;
 	u8			proto;
 
+	printk("IPv6 input mapmint\n");
+
 	/* Skip empty or non IPv6 packets */
 	if(old_skb->len < sizeof(struct ipv6hdr) || ip6h->version != 6)
 		return;
@@ -225,14 +232,20 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 		return;
 	}
 
-	// Check if destination address falls into nat64 prefix
-	if(memcmp(&ip6h->daddr, &dmr_prefix_base, dmr_prefix_len / 8))
-		return;
+	printk("IPv6 check dst\n");
+	// Check if destination address falls into local prefix
+	 //if(memcmp(&ip6h->daddr, &local_prefix_base, local_prefix_len / 8))
+	//	return;
 
 	skb_pull(old_skb, sizeof(struct ipv6hdr));
 	proto = ip6h->nexthdr;
+	// FIXME!!!!! this needs to check that the fragment is atomic
+	if(ip6h->nexthdr == 44) {
+          proto = *(char *)old_skb->data;
+	  skb_pull(old_skb, 8);
+	}
 
-	printk("NAT64: Incoming packet properties: [nexthdr = %d] [payload_len = %d] [old_skb->len = %d]\n", ip6h->nexthdr, ntohs(ip6h->payload_len), old_skb->len);
+	printk("NAT64: Incoming packet properties: proto: %d [nexthdr = %d] [payload_len = %d] [old_skb->len = %d]\n", proto, ip6h->nexthdr, ntohs(ip6h->payload_len), old_skb->len);
 	// pr_debug("NAT64: Target registration information min_ip = %d, max_ip = %d\n", info->min_ip, info->max_ip);
 
 
@@ -251,6 +264,7 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 		nat64_translate_6to4(old_skb, udph->dest, IPPROTO_UDP);
 		break;
 	case NEXTHDR_ICMP:
+		printk("mapmint: ICMP6\n");
 		nat64_handle_icmp6(old_skb, ip6h);
 		break;
 	default:
