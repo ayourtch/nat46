@@ -59,3 +59,23 @@ the packet drops when the ranges are full.
 
 Let's leave it for later. Maybe something with the syntax of -m has-free-slots could work.  
 
+Compiling
+=========
+
+With Barrier Breaker (trunk), add the following line to *feeds.conf.default*:
+```
+src-git mapmin https://github.com/ayourtch/mapmin.git
+```
+
+then issue:
+
+```
+./scripts/feeds update -a
+./scripts/feeds install -a -p mapmin
+```
+
+This will cause the following to appear in the "make menuconfig":
+
+ * Kernel modules -> Network Support -> kmod-mapmint
+
+This is where the plug and playness ends, because this is a very early code. 
