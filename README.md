@@ -41,3 +41,21 @@ the NAT44 it will be transformed, and then sent out of the wire.
 The traffic received towards the BMR prefix is also routed to this interface, and this
 does the reverse transformation.
 
+MAP-E
+=====
+
+For MAP-E the picture will be similar, except the kernel does already support something 
+very close to what we need - ipv4-in-ipv6 tunnel. It does not help us with p2p traffic, 
+but let's leave this aside for now.
+
+Multiple ranges when NATting in iptables
+========================================
+
+Alas, folks have removed the support for multiple --to targets within the single statement,
+so you can not fall back to the "next" slice if the range of the ports is already full.
+
+Supposedly one can load-balance between the ranges using -m nth, but this does not prevent 
+the packet drops when the ranges are full. 
+
+Let's leave it for later. Maybe something with the syntax of -m has-free-slots could work.  
+
