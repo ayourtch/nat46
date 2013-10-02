@@ -110,13 +110,14 @@ int write_proc(struct file *file,const char *buf,int count,void *data ) {
 }
 
 void create_new_proc_entry(void) {
-	proc_write_entry = create_proc_entry("mapmint",0666,NULL);
+	// proc_write_entry = create_proc_entry("mapmint",0666,NULL);
+	proc_write_entry = proc_create("mapmint",0666,NULL, init_net.proc_net );
 	if(!proc_write_entry) {
     		printk(KERN_INFO "Error creating proc entry");
     		return; // -ENOMEM;
     	}
-	proc_write_entry->read_proc = (void *) read_proc ;
-	proc_write_entry->write_proc = (void *) write_proc;
+	// FIXME proc_write_entry->read_proc = (void *) read_proc ;
+	// FIXME proc_write_entry->write_proc = (void *) write_proc;
 	printk(KERN_INFO "proc initialized");
 }
 

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <linux/netdevice.h>
+#include <net/ip6_checksum.h>
+#include <linux/proc_fs.h>
 
 #define UDP_DEFAULT_ 5*60
 #define ICMP_DEFAULT_ 1*60
