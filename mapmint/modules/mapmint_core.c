@@ -98,14 +98,57 @@ error:
 
 int parse_ipv6_prefix(char *prefix_address, struct in6_addr* prefix_base, int *prefix_len) {
   // FIXME: parse the prefix length as well!
-  return (in6_pton(prefix_address, -1, (u8 *)prefix_base, '\0', NULL));
+  int ret1;
+  char *plen = strchr(prefix_address, '/');
+  if (plen) {
+    *plen++ = 0;
+    *prefix_len = simple_strtol(plen, NULL, 10);
+    ret1 = in6_pton(prefix_address, -1, (u8 *)prefix_base, '\0', NULL);
+    printk("Parsing ipv6 prefix: %s (plen %s) => ret: %d, plen = %d\n", prefix_address, plen, ret1, *prefix_len);
+    return ret1;
+  } else {
+    ret1 = in6_pton(prefix_address, -1, (u8 *)prefix_base, '\0', NULL);
+    return ret1;
+  }
+  
 }
+
+int try_parse_ipv4_address(char *ipv4_address) {
+  if(ipv4_address) {
+    if(!parse_ipv4_address(ipv4_address)) {
+      printk("nat64: ipv4_address parameter error\n");
+      return 0;
+    }
+  }
+  return 1;
+}
+
+int try_parse_dmr_prefix(char *dmr_prefix_address) {
+  if(dmr_prefix_address && *dmr_prefix_address) {
+    if(!parse_ipv6_prefix(dmr_prefix_address, &dmr_prefix_base, &dmr_prefix_len)) {
+      printk("nat64: dmr_prefix_address parameter error\n");
+      return 0;
+    }
+  }
+  return 1;
+}
+
+int try_parse_local_prefix(char *local_prefix_address) {
+  if(local_prefix_address && *local_prefix_address) {
+    if(!parse_ipv6_prefix(local_prefix_address, &local_prefix_base, &local_prefix_len)) {
+      printk("nat64: local_prefix_address parameter error\n");
+      return 0;
+    }
+  }
+  return 1;
+}
+
 
 static int mapmint_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m,"%s/%d %s/%d %s/%d %d\n", dmr_prefix_address, dmr_prefix_len, 
+	seq_printf(m,"%s/%d %d %s/%d %s/%d\n", ipv4_address, ipv4_prefixlen, psid,
 	                                                local_prefix_address, local_prefix_len,
-                                                        ipv4_address, ipv4_prefixlen, psid);
+							dmr_prefix_address, dmr_prefix_len);
         return 0;
 }
 
@@ -115,10 +158,24 @@ static int mapmint_proc_open(struct inode *inode, struct file *file)
         return single_open(file, mapmint_proc_show, NULL);
 }
 
+static char *get_next_arg(char **ptail) {
+  char *pc;
+  pc = *ptail;
+  if (pc) {
+    *ptail = strchr(pc, ' ');
+    if(*ptail) {
+      *(*ptail)++ = 0;
+    }
+  }
+  return pc;
+}
+
 static ssize_t mapmint_proc_write(struct file *file, const char __user *buffer,
                               size_t count, loff_t *ppos)
 {
         char *buf = NULL;
+	char *tail;
+	int ret = 0;
 
         buf = kmalloc(sizeof(char) * (count + 1), GFP_KERNEL);
         if (!buf)
@@ -135,8 +192,11 @@ static ssize_t mapmint_proc_write(struct file *file, const char __user *buffer,
         if (buf[count - 1] == '\n')
                 buf[count - 1] = '\0';
 
-        if (!strcmp(buf, "on")) {
-	}
+	tail = buf;
+	ret = try_parse_ipv4_address(get_next_arg(&tail)) ? ret : -1;
+        psid = simple_strtol(get_next_arg(&tail), NULL, 10);
+	ret = try_parse_local_prefix(get_next_arg(&tail)) ? ret : -1;
+	ret = try_parse_dmr_prefix(get_next_arg(&tail)) ? ret : -1;
 
 	kfree(buf);
 	return count;
@@ -682,33 +742,18 @@ static struct net_device *find_netdev_by_ip(__u32 ip_address)
 
 static int __init nat64_init(void)
 {
-	int ret = -1;
+	int ret = 0;
 
 	printk("nat64: module loaded.\n");
-
-	if(ipv4_address) {
-	  if(!parse_ipv4_address(ipv4_address)) {
-	    printk("nat64: ipv4_address parameter error\n");
-	    ret = -1;
-	    goto error;
-          }
+	
+	ret = try_parse_ipv4_address(ipv4_address) ? ret : -1;
+	ret = try_parse_local_prefix(local_prefix_address) ? ret : -1;
+	ret = try_parse_dmr_prefix(dmr_prefix_address) ? ret : -1;
+	if (ret == -1) {
+	  goto error;
 	}
 
-	if(dmr_prefix_address) {
-	  if(!parse_ipv6_prefix(dmr_prefix_address, &dmr_prefix_base, &dmr_prefix_len)) {
-	    printk("nat64: dmr_prefix_address parameter error\n");
-	    ret = -1;
-	    goto error;
-          }
-	}
 
-	if(local_prefix_address) {
-	  if(!parse_ipv6_prefix(local_prefix_address, &local_prefix_base, &local_prefix_len)) {
-	    printk("nat64: local_prefix_address parameter error\n");
-	    ret = -1;
-	    goto error;
-          }
-	}
 
 	printk("nat64: translating %s (psid %d) -> 0.0.0.0 to %s/%d -> %s/%d\n", 
                      ipv4_address, psid, local_prefix_address, local_prefix_len,
