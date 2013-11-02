@@ -68,11 +68,44 @@ MODULE_PARM_DESC(psid, "port set ID (default 0)");
 
 static struct proc_dir_entry *mapmint_proc_entry;
 
+
+int parse_ipv4_address(char *ipv4_address) {
+  int ret;
+  char *pos;
+  ret = in4_pton(ipv4_address, -1, (u8 *)&ipv4_addr, '/', NULL);
+  if (!ret) {
+    printk("nat64: ipv4 is malformed [%s] X(.\n", ipv4_address);
+    ret = -1;
+    goto error;
+  }
+  pos = strchr(ipv4_address, '/');
+
+  if(pos) {
+    ipv4_prefixlen = simple_strtol(++pos, NULL, 10);
+    if(ipv4_prefixlen > 32 || ipv4_prefixlen < 1) {
+      printk("nat64: ipv4 prefix is malformed [%s] X(.\n", ipv4_address);
+      ret = -1;
+      goto error;
+    }
+    ipv4_netmask = inet_make_mask(ipv4_prefixlen);
+    ipv4_addr = ipv4_addr & ipv4_netmask;
+    printk("nat64: using IPv4 subnet %pI4/%d (netmask %pI4).\n", &ipv4_addr, ipv4_prefixlen, &ipv4_netmask);
+  }
+  return ret;
+error:
+  return ret;
+}
+
+int parse_ipv6_prefix(char *prefix_address, struct in6_addr* prefix_base, int *prefix_len) {
+  // FIXME: parse the prefix length as well!
+  return (in6_pton(prefix_address, -1, (u8 *)prefix_base, '\0', NULL));
+}
+
 static int mapmint_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m,"%s/%d %s/%d %s/%d\n", dmr_prefix_address, dmr_prefix_len, 
+	seq_printf(m,"%s/%d %s/%d %s/%d %d\n", dmr_prefix_address, dmr_prefix_len, 
 	                                                local_prefix_address, local_prefix_len,
-                                                        ipv4_address, ipv4_prefixlen);
+                                                        ipv4_address, ipv4_prefixlen, psid);
         return 0;
 }
 
@@ -647,33 +680,6 @@ static struct net_device *find_netdev_by_ip(__u32 ip_address)
 }
 
 
-int parse_ipv4_address(char *ipv4_address) {
-  int ret;
-  char *pos;
-  ret = in4_pton(ipv4_address, -1, (u8 *)&ipv4_addr, '/', NULL);
-  if (!ret) {
-    printk("nat64: ipv4 is malformed [%s] X(.\n", ipv4_address);
-    ret = -1;
-    goto error;
-  }
-  pos = strchr(ipv4_address, '/');
-
-  if(pos) {
-    ipv4_prefixlen = simple_strtol(++pos, NULL, 10);
-    if(ipv4_prefixlen > 32 || ipv4_prefixlen < 1) {
-      printk("nat64: ipv4 prefix is malformed [%s] X(.\n", ipv4_address);
-      ret = -1;
-      goto error;
-    }
-    ipv4_netmask = inet_make_mask(ipv4_prefixlen);
-    ipv4_addr = ipv4_addr & ipv4_netmask;
-    printk("nat64: using IPv4 subnet %pI4/%d (netmask %pI4).\n", &ipv4_addr, ipv4_prefixlen, &ipv4_netmask);
-  }
-  return ret;
-error:
-  return ret;
-}
-
 static int __init nat64_init(void)
 {
 	int ret = -1;
@@ -688,28 +694,31 @@ static int __init nat64_init(void)
           }
 	}
 
-
-	ret = in6_pton(dmr_prefix_address, -1, (u8 *)&dmr_prefix_base, '\0', NULL);
-	if (!ret)
-	{
-		printk("nat64: prefix address is malformed [%s] X(.\n", dmr_prefix_address);
-		ret = -1;
-		goto error;
+	if(dmr_prefix_address) {
+	  if(!parse_ipv6_prefix(dmr_prefix_address, &dmr_prefix_base, &dmr_prefix_len)) {
+	    printk("nat64: dmr_prefix_address parameter error\n");
+	    ret = -1;
+	    goto error;
+          }
 	}
 
-	ret = in6_pton(local_prefix_address, -1, (u8 *)&local_prefix_base, '\0', NULL);
-	if (!ret)
-	{
-		printk("nat64: local prefix address is malformed [%s] X(.\n", local_prefix_address);
-		ret = -1;
-		goto error;
+	if(local_prefix_address) {
+	  if(!parse_ipv6_prefix(local_prefix_address, &local_prefix_base, &local_prefix_len)) {
+	    printk("nat64: local_prefix_address parameter error\n");
+	    ret = -1;
+	    goto error;
+          }
 	}
 
-	printk("nat64: translating %s/%d to %s\n", dmr_prefix_address, dmr_prefix_len, ipv4_address);
+	printk("nat64: translating %s -> 0.0.0.0 to %s/%d -> %s/%d to %s\n", 
+                     ipv4_address, local_prefix_address, local_prefix_len,
+                                   dmr_prefix_address, dmr_prefix_len);
+
 	nat64_v4_dev = find_netdev_by_ip(ipv4_addr);
 
 	if(nat64_v4_dev) {
-		printk("nat64: %pI4 belongs to %s interface. Switching to packet hijacking and self routing mode.\n", &ipv4_addr, nat64_v4_dev->name);
+		printk("nat64: %pI4 belongs to %s interface.\n", &ipv4_addr, nat64_v4_dev->name);
+		printk("nat64: Switching to packet hijacking and self routing mode.\n");
 		ret = nf_register_hook(&nat64_nf_hook);
 		if (ret) {
 			printk("NAT64: Unable to register netfilter hooks X(.\n");
