@@ -55,10 +55,10 @@ struct hlist_head	*hash6;
 struct hlist_head	*hash4;
 unsigned int		hash_size;
 
-__be32			ipv4_addr = 0;
+__be32			ipv4_addr = 0xc0000201; // 192.0.2.1
 int			ipv4_prefixlen = 32;
 __be32			ipv4_netmask = 0xffffffff;
-static char			*ipv4_address = NULL;
+static char			*ipv4_address = "192.0.2.1";
 module_param(ipv4_address, charp, 0);
 MODULE_PARM_DESC(ipv4_address, "MAP-T IPv4 public address.");
 
@@ -708,40 +708,45 @@ static int nat64_allocate_hash(unsigned int size)
 	return 0;
 }
 
+int parse_ipv4_address(char *ipv4_address) {
+  int ret;
+  char *pos;
+  ret = in4_pton(ipv4_address, -1, (u8 *)&ipv4_addr, '/', NULL);
+  if (!ret) {
+    printk("nat64: ipv4 is malformed [%s] X(.\n", ipv4_address);
+    ret = -1;
+    goto error;
+  }
+  pos = strchr(ipv4_address, '/');
+
+  if(pos) {
+    ipv4_prefixlen = simple_strtol(++pos, NULL, 10);
+    if(ipv4_prefixlen > 32 || ipv4_prefixlen < 1) {
+      printk("nat64: ipv4 prefix is malformed [%s] X(.\n", ipv4_address);
+      ret = -1;
+      goto error;
+    }
+    ipv4_netmask = inet_make_mask(ipv4_prefixlen);
+    ipv4_addr = ipv4_addr & ipv4_netmask;
+    printk("nat64: using IPv4 subnet %pI4/%d (netmask %pI4).\n", &ipv4_addr, ipv4_prefixlen, &ipv4_netmask);
+  }
+  return ret;
+error:
+  return ret;
+}
+
 static int __init nat64_init(void)
 {
 	int ret = -1;
-	char	*pos;
 
 	printk("nat64: module loaded.\n");
 
-	if(!ipv4_address)
-	{
-		printk("nat64: ipv4_address parameter is mandatory X(.\n");
-		ret = -1;
-		goto error;
-	}
-
-	ret = in4_pton(ipv4_address, -1, (u8 *)&ipv4_addr, '/', NULL);
-	if (!ret)
-	{
-		printk("nat64: ipv4 is malformed [%s] X(.\n", ipv4_address);
-		ret = -1;
-		goto error;
-	}
-	pos = strchr(ipv4_address, '/');
-	if(pos)
-	{
-		ipv4_prefixlen = simple_strtol(++pos, NULL, 10);
-		if(ipv4_prefixlen > 32 || ipv4_prefixlen < 1)
-		{
-			printk("nat64: ipv4 prefix is malformed [%s] X(.\n", ipv4_address);
-			ret = -1;
-			goto error;
-		}
-		ipv4_netmask = inet_make_mask(ipv4_prefixlen);
-		ipv4_addr = ipv4_addr & ipv4_netmask;
-		printk("nat64: using IPv4 subnet %pI4/%d (netmask %pI4).\n", &ipv4_addr, ipv4_prefixlen, &ipv4_netmask);
+	if(ipv4_address) {
+	  if(!parse_ipv4_address(ipv4_address)) {
+	    printk("nat64: ipv4_address parameter error\n");
+	    ret = -1;
+	    goto error;
+          }
 	}
 
 
