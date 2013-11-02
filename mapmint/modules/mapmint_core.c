@@ -32,28 +32,9 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>, originally by Julius Kriukas <julius.kriukas@gmail.com>");
 MODULE_DESCRIPTION("Linux MAP(min)-T stateless translation portion implementation");
 
-struct kmem_cache	*session_cache;
-struct kmem_cache	*bib_cache;
-
-struct list_head	exipry_queue = LIST_HEAD_INIT(exipry_queue);
-
-struct expiry_q	expiry_base[NUM_EXPIRY_QUEUES] =
-{
-	{{NULL, NULL}, 5*60},
-	{{NULL, NULL}, 4*60},
-	{{NULL, NULL}, 2*60*60},
-	{{NULL, NULL}, 6},
-	{{NULL, NULL}, 60}
-};
-
-
 
 struct net_device	*nat64_v4_dev;
 struct net_device	*nat64_dev;
-
-struct hlist_head	*hash6;
-struct hlist_head	*hash4;
-unsigned int		hash_size;
 
 __be32			ipv4_addr = 0xc0000201; // 192.0.2.1
 int			ipv4_prefixlen = 32;
@@ -86,7 +67,6 @@ MODULE_PARM_DESC(psid, "port set ID (default 0)");
 
 #define IPV6_PREF_LEN (5*8+1+3)
 #define MAX_PROC_SIZE ((4*IPV6_PREF_LEN)+100)
-static char proc_data[MAX_PROC_SIZE] = "mapmint";
 
 static struct proc_dir_entry *mapmint_proc_entry;
 
@@ -668,45 +648,6 @@ static struct net_device *find_netdev_by_ip(__u32 ip_address)
 	return ret;
 }
 
-static int nat64_allocate_hash(unsigned int size)
-{
-	int			i;
-	//struct hlist_head	*hash;
-
-	size = roundup(size, PAGE_SIZE / sizeof(struct hlist_head));
-	hash_size = size;
-	//nat64_data.vmallocked = 0;
-
-	hash4 = (void *)__get_free_pages(GFP_KERNEL|__GFP_NOWARN,
-	                                           get_order(sizeof(struct hlist_head) * size));
-
-	if(!hash4) {
-		printk("nat64: Unable to allocate memory for hash4 via gfp X(.\n");
-		return -1;
-		//hash = vmalloc(sizeof(struct hlist_head) * size);
-		//nat64_data.vmallocked = 1;
-	}
-
-	hash6 = (void *)__get_free_pages(GFP_KERNEL|__GFP_NOWARN,
-	                                           get_order(sizeof(struct hlist_head) * size));
-	if(!hash6) {
-		printk("nat64: Unable to allocate memory for hash6 via gfp X(.\n");
-		free_pages((unsigned long)hash4,
-			get_order(sizeof(struct hlist_head) * hash_size));
-		return -1;
-	}
-
-	for (i = 0; i < size; i++)
-	{
-		INIT_HLIST_HEAD(&hash4[i]);
-		INIT_HLIST_HEAD(&hash6[i]);
-	}
-
-	for (i = 0; i < NUM_EXPIRY_QUEUES; i++)
-		INIT_LIST_HEAD(&expiry_base[i].queue);
-
-	return 0;
-}
 
 int parse_ipv4_address(char *ipv4_address) {
   int ret;
@@ -782,20 +723,6 @@ static int __init nat64_init(void)
 		printk("nat64: Packets will be transmitted via nat64 device.\n");
 
 
-	if(nat64_allocate_hash(65536))
-	{
-		printk("nat64: Unable to allocate memmory for hash table X(.\n");
-		ret = -ENOMEM;
-		goto error;
-	}
-
-	session_cache = kmem_cache_create("nat64_session", sizeof(struct session_entry), 0, 0, NULL);
-	if (!session_cache) {
-		printk(KERN_ERR "nat64: Unable to create session_entry slab cache\n");
-		ret = -ENOMEM;
-		goto cache_error;
-	}
-
 	bib_cache = kmem_cache_create("nat64_bib", sizeof(struct bib_entry), 0, 0, NULL);
 	if (!bib_cache) {
 		printk(KERN_ERR "nat64: Unable to create bib_entry slab cache\n");
@@ -818,7 +745,6 @@ dev_error:
 	kmem_cache_destroy(bib_cache);
 cache_bib_error:
 	kmem_cache_destroy(session_cache);
-cache_error:
 error:
 	return ret;
 }
