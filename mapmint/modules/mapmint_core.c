@@ -710,7 +710,7 @@ static int __init nat64_init(void)
           }
 	}
 
-	printk("nat64: translating %s -> 0.0.0.0 to %s/%d -> %s/%d to %s\n", 
+	printk("nat64: translating %s -> 0.0.0.0 to %s/%d -> %s/%d\n", 
                      ipv4_address, local_prefix_address, local_prefix_len,
                                    dmr_prefix_address, dmr_prefix_len);
 
@@ -730,14 +730,6 @@ static int __init nat64_init(void)
 		printk("nat64: Packets will be transmitted via nat64 device.\n");
 
 
-	bib_cache = kmem_cache_create("nat64_bib", sizeof(struct bib_entry), 0, 0, NULL);
-	if (!bib_cache) {
-		printk(KERN_ERR "nat64: Unable to create bib_entry slab cache\n");
-		ret = -ENOMEM;
-		goto cache_bib_error;
-	}
-
-
 	ret = nat64_netdev_create(&nat64_dev);
 	if(ret)
 	{
@@ -749,9 +741,6 @@ static int __init nat64_init(void)
 	return 0;
 
 dev_error:
-	kmem_cache_destroy(bib_cache);
-cache_bib_error:
-	kmem_cache_destroy(session_cache);
 error:
 	return ret;
 }
@@ -766,8 +755,6 @@ static void __exit nat64_exit(void)
 	if(nat64_v4_dev)
 		nf_unregister_hook(&nat64_nf_hook);
 
-	kmem_cache_destroy(bib_cache);
-	kmem_cache_destroy(session_cache);
 
 	printk("nat64: module unloaded.\n");
 }
