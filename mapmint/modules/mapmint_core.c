@@ -686,7 +686,6 @@ static int __init nat64_init(void)
 	char	*pos;
 
 	printk("nat64: module loaded.\n");
-        create_new_proc_entry();
 
 	if(!ipv4_address)
 	{
@@ -778,6 +777,7 @@ static int __init nat64_init(void)
 		printk(KERN_ERR "nat64: Unable to create nat64 device\n");
 		goto dev_error;
 	}
+        create_new_proc_entry();
 
 	return 0;
 
