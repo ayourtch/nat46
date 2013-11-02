@@ -26,8 +26,6 @@
 #include "mapmint.h"
 #include "mapmint_factory.h"
 
-#define NAT64_NETDEV_NAME "mapmint"
-
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>, originally by Julius Kriukas <julius.kriukas@gmail.com>");
 MODULE_DESCRIPTION("Linux MAP(min)-T stateless translation portion implementation");

@@ -27,28 +27,12 @@ static const struct net_device_ops nat64_netdev_ops = {
 
 static int nat64_netdev_up(struct net_device *dev)
 {
-	struct fib6_config cfg = {
-		.fc_table = RT6_TABLE_MAIN,
-		.fc_metric = IP6_RT_PRIO_ADDRCONF,
-		.fc_ifindex = dev->ifindex,
-		.fc_expires = 0,
-		.fc_dst_len = dmr_prefix_len,
-		.fc_flags = RTF_UP | RTF_NONEXTHOP,
-		.fc_nlinfo.nl_net = dev_net(dev),
-		.fc_protocol = RTPROT_KERNEL,
-	};
-
 	netif_start_queue(dev);
-	printk("nat64: the device is going up, you shoud automagically add nat64 prefix route :).\n");
-	
-	ipv6_addr_copy(&cfg.fc_dst, &dmr_prefix_base);
-	// ip6_route_add(&cfg);
 	return 0;
 }
 
 static int nat64_netdev_down(struct net_device *dev)
 {
-	printk("AYXX: nat64_netdev_down\n");
 	netif_stop_queue(dev);
 	return 0;
 }

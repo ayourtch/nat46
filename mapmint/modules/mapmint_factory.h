@@ -1,24 +1,9 @@
 #pragma once
 
-//#include <linux/kernel.h>
-//#include <linux/init.h>
-//#include <linux/ip.h>
-//#include <linux/icmpv6.h>
-//#include <linux/inetdevice.h>
-//#include <linux/types.h>
-
-//#include <net/ip.h>
-//#include <net/tcp.h>
-//#include <net/udp.h>
-//#include <net/icmp.h>
-//#include <net/route.h>
-//#include <net/ip6_route.h>
-
 #include <net/ipv6.h>
 
 #include "mapmint.h"
 
-//#define NAT64_NETDEV_NAME "nat64"
 
 static inline int route_ipv4_away(struct sk_buff *skb, __be16 sport, __be16 dport)
 {
