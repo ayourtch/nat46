@@ -146,7 +146,7 @@ int try_parse_local_prefix(char *local_prefix_address) {
 
 static int mapmint_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m,"%s/%d %d %s/%d %s/%d\n", ipv4_address, ipv4_prefixlen, psid,
+	seq_printf(m,"v4 %s/%d psid %d bmr %s/%d dmr %s/%d\n", ipv4_address, ipv4_prefixlen, psid,
 	                                                local_prefix_address, local_prefix_len,
 							dmr_prefix_address, dmr_prefix_len);
         return 0;
@@ -175,6 +175,7 @@ static ssize_t mapmint_proc_write(struct file *file, const char __user *buffer,
 {
         char *buf = NULL;
 	char *tail;
+        char *arg_name;
 	int ret = 0;
 
         buf = kmalloc(sizeof(char) * (count + 1), GFP_KERNEL);
@@ -193,10 +194,17 @@ static ssize_t mapmint_proc_write(struct file *file, const char __user *buffer,
                 buf[count - 1] = '\0';
 
 	tail = buf;
-	ret = try_parse_ipv4_address(get_next_arg(&tail)) ? ret : -1;
-        psid = simple_strtol(get_next_arg(&tail), NULL, 10);
-	ret = try_parse_local_prefix(get_next_arg(&tail)) ? ret : -1;
-	ret = try_parse_dmr_prefix(get_next_arg(&tail)) ? ret : -1;
+	while (NULL != (arg_name = get_next_arg(&tail))) {
+          if (0 == strcmp(arg_name, "v4")) {
+	    ret = try_parse_ipv4_address(get_next_arg(&tail)) ? ret : -1;
+          } else if (0 == strcmp(arg_name, "psid")) {
+            psid = simple_strtol(get_next_arg(&tail), NULL, 10);
+          } else if (0 == strcmp(arg_name, "bmr")) { 
+	    ret = try_parse_local_prefix(get_next_arg(&tail)) ? ret : -1;
+          } else if (0 == strcmp(arg_name, "dmr")) {
+	    ret = try_parse_dmr_prefix(get_next_arg(&tail)) ? ret : -1;
+          }
+        }
 
 	kfree(buf);
 	return count;
