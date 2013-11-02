@@ -710,8 +710,8 @@ static int __init nat64_init(void)
           }
 	}
 
-	printk("nat64: translating %s -> 0.0.0.0 to %s/%d -> %s/%d\n", 
-                     ipv4_address, local_prefix_address, local_prefix_len,
+	printk("nat64: translating %s (psid %d) -> 0.0.0.0 to %s/%d -> %s/%d\n", 
+                     ipv4_address, psid, local_prefix_address, local_prefix_len,
                                    dmr_prefix_address, dmr_prefix_len);
 
 	nat64_v4_dev = find_netdev_by_ip(ipv4_addr);
