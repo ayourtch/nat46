@@ -88,37 +88,65 @@ MODULE_PARM_DESC(psid, "port set ID (default 0)");
 #define MAX_PROC_SIZE ((4*IPV6_PREF_LEN)+100)
 static char proc_data[MAX_PROC_SIZE] = "mapmint";
 
-static struct proc_dir_entry *proc_write_entry;
+static struct proc_dir_entry *mapmint_proc_entry;
 
-int read_proc(char *buf,char **start,off_t offset,int count,int *eof,void *data ) {
-	int len=0;
-	len = sprintf(buf,"dmr=%s/%d\n", dmr_prefix_address, dmr_prefix_len );
-	len += sprintf(&buf[len],"v6=%s/%d\n", local_prefix_address, local_prefix_len );
-	len += sprintf(&buf[len],"v4=%s/%d\n", ipv4_address, ipv4_prefixlen );
-
-
-	return len;
+static int mapmint_proc_show(struct seq_file *m, void *v)
+{
+	seq_printf(m,"%s/%d %s/%d %s/%d\n", dmr_prefix_address, dmr_prefix_len, 
+	                                                local_prefix_address, local_prefix_len,
+                                                        ipv4_address, ipv4_prefixlen);
+        return 0;
 }
 
-int write_proc(struct file *file,const char *buf,int count,void *data ) {
 
-	if(count > sizeof(proc_data)-1)
-		count = sizeof(proc_data)-1;
-	if(copy_from_user(proc_data, buf, count))
-		return -EFAULT;
+static int mapmint_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, mapmint_proc_show, NULL);
+}
+
+static ssize_t mapmint_proc_write(struct file *file, const char __user *buffer,
+                              size_t count, loff_t *ppos)
+{
+        char *buf = NULL;
+
+        buf = kmalloc(sizeof(char) * (count + 1), GFP_KERNEL);
+        if (!buf)
+                return -ENOMEM;
+
+        if (copy_from_user(buf, buffer, count)) {
+                kfree(buf);
+                return -EFAULT;
+        }
+
+        buf[count] = '\0';
+
+        /* work around \n when echo'ing into proc */
+        if (buf[count - 1] == '\n')
+                buf[count - 1] = '\0';
+
+        if (!strcmp(buf, "on")) {
+	}
+
+	kfree(buf);
 	return count;
 }
 
+
+static const struct file_operations mapmint_proc_fops = {
+        .owner          = THIS_MODULE,
+        .open           = mapmint_proc_open,
+        .read           = seq_read,
+        .llseek         = seq_lseek,
+        .release        = single_release,
+        .write          = mapmint_proc_write,
+};
+
 void create_new_proc_entry(void) {
-	// proc_write_entry = create_proc_entry("mapmint",0666,NULL);
-	proc_write_entry = proc_create("mapmint",0666,NULL, init_net.proc_net );
-	if(!proc_write_entry) {
+	mapmint_proc_entry = proc_create("mapmint",0666,NULL, &mapmint_proc_fops );
+	if(!mapmint_proc_entry) {
     		printk(KERN_INFO "Error creating proc entry");
     		return; // -ENOMEM;
     	}
-	// FIXME proc_write_entry->read_proc = (void *) read_proc ;
-	// FIXME proc_write_entry->write_proc = (void *) write_proc;
-	printk(KERN_INFO "proc initialized");
 }
 
 
