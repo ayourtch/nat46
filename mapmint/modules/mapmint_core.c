@@ -146,9 +146,9 @@ int try_parse_local_prefix(char *local_prefix_address) {
 
 static int mapmint_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m,"v4 %s/%d psid %d bmr %s/%d dmr %s/%d\n", ipv4_address, ipv4_prefixlen, psid,
-	                                                local_prefix_address, local_prefix_len,
-							dmr_prefix_address, dmr_prefix_len);
+	seq_printf(m,"v4 %pI4/%d psid %d bmr %pI6c/%d dmr %pI6c/%d\n", &ipv4_addr, ipv4_prefixlen, psid,
+	                                                &local_prefix_base, local_prefix_len,
+							&dmr_prefix_base, dmr_prefix_len);
         return 0;
 }
 
