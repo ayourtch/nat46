@@ -175,6 +175,7 @@ int arg_psidoffset = 6;
 int arg_encapsulate = 0;
 int arg_translate = 0;
 int arg_psid = 0;
+int arg_psid_seen = 0;
 
 in_addr_t arg_address_val;
 int arg_address_len = 0;
@@ -258,6 +259,7 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 			break;
 		case 'o':
 			arg_psid = atoi(optarg);
+			arg_psid_seen = 1;
 			break;
 		case 'c':
 			arg_mss = atoi(optarg);
@@ -278,13 +280,38 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 	}
 	if (action == ACTION_STOP) {
 	}
+	if (action == ACTION_RULE) {
+		if(arg_default && arg_translate) {
+			char v6addr[INET6_ADDRSTRLEN];
+			printf("echo dmr %s/%d >/proc/mapmint\n", 
+				inet_ntop(AF_INET6, arg_prefix6_val, v6addr, sizeof(v6addr)),
+				arg_prefix6_len);
+		}
+	}
 	if (action == ACTION_START) {
 		int a;
 		int port1, port2;
 		int psidbits = xlog2(arg_ratio);
 		int proto;
+		char v6addr[INET6_ADDRSTRLEN];
 		char *proto_tab[3] = { "icmp", "tcp", "udp" };
-		printf("psid bits: %d\n", psidbits);
+
+
+		if (arg_translate) {
+			if (arg_prefix6_seen) {
+				printf("echo bmr %s/%d >/proc/mapmint\n", 
+					inet_ntop(AF_INET6, arg_prefix6_val, v6addr, sizeof(v6addr)),
+					arg_prefix6_len);
+			}
+			if (arg_psid_seen) {
+				printf("echo psid %d >/proc/mapmint\n", arg_psid);
+			}
+			if (arg_publicaddr_seen) {
+				printf("echo v4 %s >/proc/mapmint\n", 
+					inet_ntoa(*(struct in_addr *)&arg_publicaddr_val));
+			}
+		}
+		fprintf(stderr, "psid bits: %d\n", psidbits);
 
                 // iptables -t nat -A POSTROUTING -p icmp -m connlimit --connlimit-daddr --connlimit-upto 2 -o eth0 -j SNAT --to 1.1.1.1:1025-1026
 		
