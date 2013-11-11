@@ -360,16 +360,24 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 	switch(proto) {
 	case NEXTHDR_TCP:
 		tcph = (struct tcphdr *)old_skb->data;
-		skb_pull(old_skb, tcp_hdrlen(old_skb));
+		if (tcp_hdr(old_skb) && tcph) {
+			skb_pull(old_skb, tcp_hdrlen(old_skb));
 
-		nat64_translate_6to4(old_skb, tcph->dest, IPPROTO_TCP);
+			nat64_translate_6to4(old_skb, tcph->dest, IPPROTO_TCP);
+		} else {
+			printk("NULL TCP header ? tcp_hdr: %p, tcph: %p\n",
+				tcp_hdr(old_skb), tcph);
+		}
 		//nat64_generate_tcp(old_skb, ip6h, bib);
 		break;
 	case NEXTHDR_UDP:
 		udph = (struct udphdr *)old_skb->data;
-		skb_pull(old_skb, sizeof(struct udphdr));
-
-		nat64_translate_6to4(old_skb, udph->dest, IPPROTO_UDP);
+		if (udph) {
+			skb_pull(old_skb, sizeof(struct udphdr));
+			nat64_translate_6to4(old_skb, udph->dest, IPPROTO_UDP);
+		} else {
+			printk("NULL UDP header ?\n");
+		}
 		break;
 	case NEXTHDR_ICMP:
 		printk("mapmint: ICMP6\n");
