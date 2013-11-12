@@ -113,11 +113,11 @@ static inline __be32 map_6to4(struct in6_addr *addr6)
 	return addr4;
 }
 
-static inline __be32 extract_ipv4(struct in6_addr addr, int prefix)
+static inline uint32_t extract_ipv4(struct in6_addr addr, int prefix)
 {
 	switch(prefix) {
 	case 32:
-		return addr.s6_addr32[1];
+		return ntohl(addr.s6_addr32[1]);
 	case 40:
 		return 0;	//FIXME
 	case 48:
@@ -125,10 +125,12 @@ static inline __be32 extract_ipv4(struct in6_addr addr, int prefix)
 	case 56:
 		return 0;	//FIXME
 	case 64:
-		return (((((addr.s6_addr[12] << 8) + addr.s6_addr[11]) << 8) + addr.s6_addr[10]) << 8) + addr.s6_addr[9]; 
+		return ntohl((((((addr.s6_addr[9] << 8) + addr.s6_addr[10]) << 8) + 
+                                 addr.s6_addr[11]) << 8) + addr.s6_addr[12]); 
+
 		//return 0;	//FIXME
 	case 96:
-		return addr.s6_addr32[3];
+		return ntohl(addr.s6_addr32[3]);
 	default:
 		return 0;
 	}
@@ -136,28 +138,37 @@ static inline __be32 extract_ipv4(struct in6_addr addr, int prefix)
 
 static inline void assemble_ipv6_bmr(struct in6_addr *dest, __be32 addr)
 {
+	uint32_t addr_n = htonl(addr);
+	uint8_t *pa = (void*) &addr_n;
 	memcpy(dest, &dmr_prefix_base, sizeof(dmr_prefix_base));
 	switch(dmr_prefix_len) {
 	case 64:
-		dest->s6_addr[9] = (addr & 0xff);
-		dest->s6_addr[10] = (addr >> 8) & 0xff;
-		dest->s6_addr[11] = (addr >> 16) & 0xff;
-		dest->s6_addr[12] = (addr >> 24);
+		dest->s6_addr[9] = *pa++;
+		dest->s6_addr[10] = *pa++;
+		dest->s6_addr[11] = *pa++;
+		dest->s6_addr[12] = *pa++;
+		
 		break;
 	case 96:
-		dest->s6_addr32[3] = addr;
+		dest->s6_addr32[3] = addr_n;
 		break;
 	}
 }
 
 static inline void assemble_ipv6_local(struct in6_addr *dest, __be32 addr)
 {
+	uint32_t addr_n = htonl(addr);
+	uint8_t *pa = (void*) &addr_n;
+
 	memcpy(dest, &local_prefix_base, sizeof(local_prefix_base));
-		dest->s6_addr[9] = (addr & 0xff);
-		dest->s6_addr[10] = (addr >> 8) & 0xff;
-		dest->s6_addr[11] = (addr >> 16) & 0xff;
-		dest->s6_addr[12] = (addr >> 24);
-	dest->s6_addr16[7] = psid;
+
+		dest->s6_addr[9] = *pa++;
+		dest->s6_addr[10] = *pa++;
+		dest->s6_addr[11] = *pa++;
+		dest->s6_addr[12] = *pa++;
+
+		dest->s6_addr[14] = psid & 0xff;
+		dest->s6_addr[15] = (psid >> 8) & 0xff;
 	return;
 	dest->s6_addr16[5] = (addr >> 16);
 	dest->s6_addr16[6] = (addr & 0xffff);
