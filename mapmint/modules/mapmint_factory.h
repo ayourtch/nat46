@@ -145,6 +145,7 @@ static inline void factory_translate_ip6(struct sk_buff *src, struct sk_buff *ds
 	/* AYXX: order fixed. */
 	iph->saddr	= extract_ipv4(ip6h->saddr, dmr_prefix_len);
 	iph->daddr	= extract_ipv4(ip6h->daddr, local_prefix_len);
+	printk("AYXX: factory_translate_ip6 ipv4 src: %pI4 dst: %pI4\n", &iph->saddr, &iph->daddr);
 
 	/*	Calculate IP header checksum	*/
 	ip_send_check(iph);

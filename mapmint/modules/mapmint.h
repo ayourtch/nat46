@@ -117,7 +117,7 @@ static inline uint32_t extract_ipv4(struct in6_addr addr, int prefix)
 {
 	switch(prefix) {
 	case 32:
-		return ntohl(addr.s6_addr32[1]);
+		return 0;	//FIXME
 	case 40:
 		return 0;	//FIXME
 	case 48:
@@ -125,12 +125,12 @@ static inline uint32_t extract_ipv4(struct in6_addr addr, int prefix)
 	case 56:
 		return 0;	//FIXME
 	case 64:
-		return ntohl((((((addr.s6_addr[9] << 8) + addr.s6_addr[10]) << 8) + 
+		return htonl((((((addr.s6_addr[9] << 8) + addr.s6_addr[10]) << 8) + 
                                  addr.s6_addr[11]) << 8) + addr.s6_addr[12]); 
 
 		//return 0;	//FIXME
 	case 96:
-		return ntohl(addr.s6_addr32[3]);
+		return htonl(addr.s6_addr32[3]);
 	default:
 		return 0;
 	}
@@ -138,11 +138,12 @@ static inline uint32_t extract_ipv4(struct in6_addr addr, int prefix)
 
 static inline void assemble_ipv6_bmr(struct in6_addr *dest, __be32 addr)
 {
-	uint32_t addr_n = htonl(addr);
+	uint32_t addr_n = (addr);
 	uint8_t *pa = (void*) &addr_n;
 	memcpy(dest, &dmr_prefix_base, sizeof(dmr_prefix_base));
 	switch(dmr_prefix_len) {
 	case 64:
+		printk("AYXX: assemble_ipv6_bmr: %pI4 be %pI4 le %pI4\n", &addr_n, (__be32 *) &addr_n, (__le32 *) &addr_n);
 		dest->s6_addr[9] = *pa++;
 		dest->s6_addr[10] = *pa++;
 		dest->s6_addr[11] = *pa++;
@@ -157,7 +158,7 @@ static inline void assemble_ipv6_bmr(struct in6_addr *dest, __be32 addr)
 
 static inline void assemble_ipv6_local(struct in6_addr *dest, __be32 addr)
 {
-	uint32_t addr_n = htonl(addr);
+	uint32_t addr_n = (addr);
 	uint8_t *pa = (void*) &addr_n;
 
 	memcpy(dest, &local_prefix_base, sizeof(local_prefix_base));
