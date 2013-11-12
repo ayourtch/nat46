@@ -347,11 +347,13 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 
 	skb_pull(old_skb, sizeof(struct ipv6hdr));
 	proto = ip6h->nexthdr;
+/*
 	// FIXME!!!!! this needs to check that the fragment is atomic
 	if(ip6h->nexthdr == 44) {
           proto = *(char *)old_skb->data;
 	  skb_pull(old_skb, 8);
 	}
+*/
 
 	printk("NAT64: Incoming packet properties: proto: %d [nexthdr = %d] [payload_len = %d] [old_skb->len = %d]\n", proto, ip6h->nexthdr, ntohs(ip6h->payload_len), old_skb->len);
 	// pr_debug("NAT64: Target registration information min_ip = %d, max_ip = %d\n", info->min_ip, info->max_ip);
