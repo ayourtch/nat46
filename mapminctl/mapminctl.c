@@ -283,6 +283,7 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 	if (action == ACTION_RULE) {
 		if(arg_default && arg_translate) {
 			char v6addr[INET6_ADDRSTRLEN];
+
 			printf("echo dmr %s/%d >/proc/mapmint\n", 
 				inet_ntop(AF_INET6, arg_prefix6_val, v6addr, sizeof(v6addr)),
 				arg_prefix6_len);
@@ -299,9 +300,18 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 
 		if (arg_translate) {
 			if (arg_prefix6_seen) {
+				in6_addr_t arg_prefix6_val_bmr;
+				uint8_t *pc = (void *)&arg_prefix6_val_bmr;
+				int psidbits = xlog2(arg_ratio);
+
+				memcpy(arg_prefix6_val_bmr, arg_prefix6_val, sizeof(arg_prefix6_val_bmr));
+		
+				pc[arg_prefix6_len/8] |= 0xff & ((arg_psid << (8-psidbits)) >> (arg_prefix6_len%8));
+				pc[arg_prefix6_len/8 + 1] |= (0xff & (arg_psid << (psidbits + 8 - (arg_prefix6_len % 8)))); 
+
 				printf("echo bmr %s/%d >/proc/mapmint\n", 
-					inet_ntop(AF_INET6, arg_prefix6_val, v6addr, sizeof(v6addr)),
-					arg_prefix6_len);
+					inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)),
+					64);
 			}
 			if (arg_psid_seen) {
 				printf("echo psid %d >/proc/mapmint\n", arg_psid);
