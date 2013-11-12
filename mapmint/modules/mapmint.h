@@ -7,6 +7,8 @@
 extern struct net_device	*nat64_v4_dev;
 extern struct net_device	*nat64_dev;
 
+extern int debug;
+
 extern __be32			ipv4_addr;
 extern __be32			ipv4_netmask;
 extern int			ipv4_prefixlen;
@@ -60,7 +62,6 @@ static inline void assemble_ipv6_bmr(struct in6_addr *dest, __be32 addr)
 	memcpy(dest, &dmr_prefix_base, sizeof(dmr_prefix_base));
 	switch(dmr_prefix_len) {
 	case 64:
-		printk("AYXX: assemble_ipv6_bmr: %pI4 be %pI4 le %pI4\n", &addr_n, (__be32 *) &addr_n, (__le32 *) &addr_n);
 		dest->s6_addr[9] = *pa++;
 		dest->s6_addr[10] = *pa++;
 		dest->s6_addr[11] = *pa++;

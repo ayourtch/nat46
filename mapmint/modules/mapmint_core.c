@@ -34,6 +34,10 @@ MODULE_DESCRIPTION("Linux MAP(min)-T stateless translation portion implementatio
 struct net_device	*nat64_v4_dev;
 struct net_device	*nat64_dev;
 
+int			debug = 0;
+module_param(debug, int, 0);
+MODULE_PARM_DESC(debug, "debugging messages level (default=1)");
+
 __be32			ipv4_addr = 0xc0000201; // 192.0.2.1
 int			ipv4_prefixlen = 32;
 __be32			ipv4_netmask = 0xffffffff;
@@ -89,7 +93,9 @@ int parse_ipv4_address(char *ipv4_address) {
     }
     ipv4_netmask = inet_make_mask(ipv4_prefixlen);
     ipv4_addr = ipv4_addr & ipv4_netmask;
-    printk("nat64: using IPv4 subnet %pI4/%d (netmask %pI4).\n", &ipv4_addr, ipv4_prefixlen, &ipv4_netmask);
+    if (debug > 0) {
+    	printk("nat64: using IPv4 subnet %pI4/%d (netmask %pI4).\n", &ipv4_addr, ipv4_prefixlen, &ipv4_netmask);
+    }
   }
   return ret;
 error:
@@ -104,7 +110,9 @@ int parse_ipv6_prefix(char *prefix_address, struct in6_addr* prefix_base, int *p
     *plen++ = 0;
     *prefix_len = simple_strtol(plen, NULL, 10);
     ret1 = in6_pton(prefix_address, -1, (u8 *)prefix_base, '\0', NULL);
-    printk("Parsing ipv6 prefix: %s (plen %s) => ret: %d, plen = %d\n", prefix_address, plen, ret1, *prefix_len);
+    if (debug > 0) {
+        printk("Parsing ipv6 prefix: %s (plen %s) => ret: %d, plen = %d\n", prefix_address, plen, ret1, *prefix_len);
+    }
     return ret1;
   } else {
     ret1 = in6_pton(prefix_address, -1, (u8 *)prefix_base, '\0', NULL);
@@ -146,9 +154,9 @@ int try_parse_local_prefix(char *local_prefix_address) {
 
 static int mapmint_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m,"v4 %pI4/%d psid %d bmr %pI6c/%d dmr %pI6c/%d\n", &ipv4_addr, ipv4_prefixlen, psid,
+	seq_printf(m,"v4 %pI4/%d psid %d bmr %pI6c/%d dmr %pI6c/%d debug %d\n", &ipv4_addr, ipv4_prefixlen, psid,
 	                                                &local_prefix_base, local_prefix_len,
-							&dmr_prefix_base, dmr_prefix_len);
+							&dmr_prefix_base, dmr_prefix_len, debug);
         return 0;
 }
 
@@ -203,6 +211,8 @@ static ssize_t mapmint_proc_write(struct file *file, const char __user *buffer,
 	    ret = try_parse_local_prefix(get_next_arg(&tail)) ? ret : -1;
           } else if (0 == strcmp(arg_name, "dmr")) {
 	    ret = try_parse_dmr_prefix(get_next_arg(&tail)) ? ret : -1;
+          } else if (0 == strcmp(arg_name, "debug")) {
+            debug = simple_strtol(get_next_arg(&tail), NULL, 10);
           }
         }
 
@@ -291,7 +301,9 @@ void inline nat64_handle_icmp6(struct sk_buff *skb, struct ipv6hdr *ip6h)
 
 	icmph = (struct icmphdr *)skb->data;
 	skb_pull(skb, sizeof(struct icmphdr));
-	printk("ICMP type: %d code %d\n", icmph->type, icmph->code);
+	if(debug > 2) {
+	    printk("ICMP type: %d code %d\n", icmph->type, icmph->code);
+	}
 
 	if(icmph->type >> 7) {
 		// Informational ICMP
@@ -307,14 +319,20 @@ void inline nat64_handle_icmp6(struct sk_buff *skb, struct ipv6hdr *ip6h)
 		// Error ICMP
 		switch(icmph->type) {
 		case ICMPV6_TIME_EXCEED:
-			printk("nat64: [icmp6] Time Exceeded ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
+			if(debug > 2) {
+			    printk("nat64: [icmp6] Time Exceeded ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
+			}
 			break;
 		case 1:
-			printk("nat64: [icmp6] Known ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
+			if (debug > 2) {
+			    printk("nat64: [icmp6] Known ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
+			}
 			nat64_translate_6to4(skb, ICMP_DEST_UNREACH, IPPROTO_ICMP);
 			break;
 		default:
-			printk("nat64: [icmp6] Unknown ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
+			if (debug > 2) {
+			    printk("nat64: [icmp6] Unknown ICMPv6 type %hhu (Code: %hhu)\n", icmph->type, icmph->code);
+			}
 		}
 		return;
 	}
@@ -328,7 +346,9 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 	const struct tcphdr	*tcph;
 	u8			proto;
 
-	printk("IPv6 input mapmint\n");
+	if(debug > 3) {
+	    printk("IPv6 input mapmint\n");
+	}
 
 	/* Skip empty or non IPv6 packets */
 	if(old_skb->len < sizeof(struct ipv6hdr) || ip6h->version != 6)
@@ -336,11 +356,14 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 
 	if (!(ipv6_addr_type(&ip6h->saddr) & IPV6_ADDR_UNICAST)) {//||
 	    //(!(ipv6_addr_type(&ip6h->daddr) & IPV6_ADDR_UNICAST))) {
-		printk("nat64: [ipv6] source address is not unicast.\n");
+		if(debug > 2) {
+		    printk("nat64: [ipv6] source address is not unicast.\n");
+		}
 		return;
 	}
-
-	printk("IPv6 check dst\n");
+	if (debug > 3) {
+	    printk("IPv6 check dst\n");
+	}
 	// Check if destination address falls into local prefix
 	 //if(memcmp(&ip6h->daddr, &local_prefix_base, local_prefix_len / 8))
 	//	return;
@@ -355,8 +378,9 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 	}
 */
 
-	printk("NAT64: Incoming packet properties: proto: %d [nexthdr = %d] [payload_len = %d] [old_skb->len = %d]\n", proto, ip6h->nexthdr, ntohs(ip6h->payload_len), old_skb->len);
-	// pr_debug("NAT64: Target registration information min_ip = %d, max_ip = %d\n", info->min_ip, info->max_ip);
+	if (debug > 3) {
+	    printk("NAT64: Incoming packet properties: proto: %d [nexthdr = %d] [payload_len = %d] [old_skb->len = %d]\n", proto, ip6h->nexthdr, ntohs(ip6h->payload_len), old_skb->len);
+	}
 
 
 	switch(proto) {
@@ -367,8 +391,10 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 
 			nat64_translate_6to4(old_skb, tcph->dest, IPPROTO_TCP);
 		} else {
-			printk("NULL TCP header ? tcp_hdr: %p, tcph: %p\n",
+			if(debug > 1) {
+			    printk("NULL TCP header ? tcp_hdr: %p, tcph: %p\n",
 				tcp_hdr(old_skb), tcph);
+			}
 		}
 		//nat64_generate_tcp(old_skb, ip6h, bib);
 		break;
@@ -378,15 +404,21 @@ void nat64_ipv6_input(struct sk_buff *old_skb)
 			skb_pull(old_skb, sizeof(struct udphdr));
 			nat64_translate_6to4(old_skb, udph->dest, IPPROTO_UDP);
 		} else {
-			printk("NULL UDP header ?\n");
+			if(debug > 1) {
+			    printk("NULL UDP header ?\n");
+			}
 		}
 		break;
 	case NEXTHDR_ICMP:
-		printk("mapmint: ICMP6\n");
+		if (debug > 3) {
+		    printk("mapmint: ICMP6\n");
+		}
 		nat64_handle_icmp6(old_skb, ip6h);
 		break;
 	default:
-		printk("nat64: [ipv6] Next header %d. Currently only TCP, UDP and ICMP6 is supported.\n", proto);
+		if (debug > 1) {
+		    printk("nat64: [ipv6] Next header %d. Currently only TCP, UDP and ICMP6 is supported.\n", proto);
+		}
 		break;
 	}
 }
@@ -419,7 +451,6 @@ static void nat64_translate_4to6_deep(struct sk_buff *old_skb, __be16 sport)
 
 	skb_len += old_skb->len;
 
-	//printk("nat64: [4to6] Generating IPv6 packet.\n");
 	skb = alloc_skb(skb_len, GFP_ATOMIC);
 
 	if (!skb) {
@@ -451,7 +482,6 @@ static void nat64_translate_4to6_deep(struct sk_buff *old_skb, __be16 sport)
 	nat64_dev->stats.rx_bytes += skb->len;
 	netif_rx(skb);
 
-//	printk("nat64: [ipv4] Sending translated IPv6 packet.\n");
 }
 
 static void nat64_translate_4to6(struct sk_buff *old_skb, __be16 sport, int proto)
@@ -473,7 +503,6 @@ static void nat64_translate_4to6(struct sk_buff *old_skb, __be16 sport, int prot
 		break;
 	}
 
-	//printk("nat64: [4to6] Generating IPv6 packet.\n");
 	skb = alloc_skb(skb_len, GFP_ATOMIC);
 
 	if (!skb) {
@@ -503,7 +532,6 @@ static void nat64_translate_4to6(struct sk_buff *old_skb, __be16 sport, int prot
 	nat64_dev->stats.rx_bytes += skb->len;
 	netif_rx(skb);
 
-//	printk("nat64: [ipv4] Sending translated IPv6 packet.\n");
 }
 
 static inline unsigned int nat64_handle_tcp4(struct sk_buff *skb, struct iphdr *iph)
@@ -540,7 +568,9 @@ static inline unsigned int nat64_handle_icmp4(struct sk_buff *skb, struct iphdr 
 	if(skb->len < sizeof(struct icmphdr))
 		return NF_ACCEPT;
 
-	printk("AY: nat64_handle_icmp4\n");
+	if (debug > 3) {
+	    printk("AY: nat64_handle_icmp4\n");
+	}
 
 	switch(icmph->type) {
 	//		Informational messages
@@ -661,7 +691,9 @@ static inline unsigned int nat64_handle_icmp4(struct sk_buff *skb, struct iphdr 
 	case ICMP_ADDRESS:
 	case ICMP_ADDRESSREPLY:
 	default:
-		printk("nat64: [icmp] Unsupported = %d, code = %hu\n", icmph->type, icmph->code);
+		if (debug > 1) {
+			printk("nat64: [icmp] Unsupported = %d, code = %hu\n", icmph->type, icmph->code);
+		}
 		return NF_ACCEPT;
 	}
 
@@ -675,12 +707,16 @@ static inline unsigned int nat64_handle_icmp4(struct sk_buff *skb, struct iphdr 
 unsigned int nat64_ipv4_input(struct sk_buff *skb)
 {
 	struct iphdr	*iph = ip_hdr(skb);
-	printk("nat64: [ipv4] Got IPv4 packet (len %d). before check\n", skb->len);
+	if(debug > 3) {
+	    printk("nat64: [ipv4] Got IPv4 packet (len %d). before check\n", skb->len);
+	}
 
 	if(skb->len < sizeof(struct iphdr) || iph->version != 4)
 		return NF_ACCEPT;
 
-	printk("nat64: [ipv4] Got IPv4 packet (len %d).\n", skb->len);
+	if (debug > 3) {
+	    printk("nat64: [ipv4] Got IPv4 packet (len %d).\n", skb->len);
+	}
 
 	skb_pull(skb, ip_hdrlen(skb));
 	skb_reset_transport_header(skb);
@@ -772,10 +808,11 @@ static int __init nat64_init(void)
 	}
 
 
-
-	printk("nat64: translating %s (psid %d) -> 0.0.0.0 to %s/%d -> %s/%d\n", 
+	if (debug > 1) {
+	    printk("nat64: translating %s (psid %d) -> 0.0.0.0 to %s/%d -> %s/%d\n", 
                      ipv4_address, psid, local_prefix_address, local_prefix_len,
                                    dmr_prefix_address, dmr_prefix_len);
+	}
 
 	nat64_v4_dev = find_netdev_by_ip(ipv4_addr);
 
@@ -813,7 +850,9 @@ static void __exit nat64_exit(void)
 	nat64_netdev_destroy(nat64_dev);
 
         remove_proc_entry("mapmint", NULL);
-	printk("mapmint: Removed proc entry\n");
+	if (debug > 1) {
+	    printk("mapmint: Removed proc entry\n");
+	}
 
 	if(nat64_v4_dev)
 		nf_unregister_hook(&nat64_nf_hook);

@@ -32,7 +32,6 @@ static inline int route_ipv4_away(struct sk_buff *skb, __be16 sport, __be16 dpor
 
 	skb_dst_set(skb, dst_clone(&rp->dst));
 
-	//printk("nat64: [ipv6] Sending translated IPv4 packet.\n");
 	nat64_dev->stats.tx_packets++;
 	nat64_dev->stats.tx_bytes += skb->len;
 	dst_output(skb);
@@ -145,7 +144,9 @@ static inline void factory_translate_ip6(struct sk_buff *src, struct sk_buff *ds
 	/* AYXX: order fixed. */
 	iph->saddr	= extract_ipv4(ip6h->saddr, dmr_prefix_len);
 	iph->daddr	= extract_ipv4(ip6h->daddr, local_prefix_len);
-	printk("AYXX: factory_translate_ip6 ipv4 src: %pI4 dst: %pI4\n", &iph->saddr, &iph->daddr);
+	if (debug > 2) {
+	    printk("AYXX: factory_translate_ip6 ipv4 src: %pI4 dst: %pI4\n", &iph->saddr, &iph->daddr);
+	}
 
 	/*	Calculate IP header checksum	*/
 	ip_send_check(iph);
@@ -183,7 +184,6 @@ static inline void factory_clone_icmp(struct sk_buff *src, struct sk_buff *dst, 
 	// icmph->un.echo.id = id;
 	icmph->checksum = 0;
 
-	//printk("nat64: [debug] [icmp_clone] type=%hhu, id=%hu, seq=%hu\n", icmph->type, icmph->un.echo.id, icmph->un.echo.sequence);
 
 	skb_reset_transport_header(dst);
 }

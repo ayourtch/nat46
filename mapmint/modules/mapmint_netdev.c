@@ -39,7 +39,9 @@ static int nat64_netdev_down(struct net_device *dev)
 
 static netdev_tx_t nat64_netdev_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	printk("AYXX: nat64_netdev_xmit\n");
+	if(debug > 3) {
+	    printk("AYXX: nat64_netdev_xmit\n");
+	}
 	switch(ntohs(skb->protocol)) {
 	case ETH_P_IP:
 		nat64_ipv4_input(skb);
