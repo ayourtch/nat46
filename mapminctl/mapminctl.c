@@ -287,6 +287,7 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 			printf("echo dmr %s/%d >/proc/mapmint\n", 
 				inet_ntop(AF_INET6, arg_prefix6_val, v6addr, sizeof(v6addr)),
 				arg_prefix6_len);
+			printf("ip -4 route add default dev mapmint\n");
 		}
 	}
 	if (action == ACTION_START) {
@@ -312,6 +313,19 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 				printf("echo bmr %s/%d >/proc/mapmint\n", 
 					inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)),
 					64);
+
+				if(arg_psid_seen && arg_publicaddr_seen) {
+					pc[9] = (arg_publicaddr_val >> 24) & 0xff;
+					pc[10] = (arg_publicaddr_val >> 16) & 0xff;
+					pc[11] = (arg_publicaddr_val >> 8) & 0xff;
+					pc[12] = (arg_publicaddr_val ) & 0xff;
+
+					pc[13] = (arg_psid >> 8) & 0xff;
+					pc[14] = arg_psid & 0xff;
+
+					printf("ip -6 route add %s/128 dev mapmint\n", 
+						inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)));
+				}
 			}
 			if (arg_psid_seen) {
 				printf("echo psid %d >/proc/mapmint\n", arg_psid);
