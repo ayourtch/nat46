@@ -22,9 +22,14 @@ mapminctl -r -d -P 2001:470:73cd:cafe::/64 -T
 #include <string.h>
 #include <stdlib.h>    
 #include <getopt.h>
+#include <inttypes.h>
 #include <arpa/inet.h>
+#include <net/route.h>
 
 
+#define RULE_PREFERENCE 32765
+#define ROUTE_TABLE 77
+#define NET_DEVICE_T "mapmint"
 
 
 void usage(int status) {
@@ -195,6 +200,46 @@ int getmapport(int a, int psidoffset, int psidbits, int psid) {
   return port;
 }
 
+int add_dmr_v6_route(char *dmr_prefix, int dmr_prefix_len) {
+  static FILE *fp_route = NULL;
+  char line[512], ifname[16];
+  int found_default = 0;
+  uint32_t rflags;
+  struct in6_addr nhop;
+  int i;
+  char v6addr[INET6_ADDRSTRLEN];
+  
+
+  if (!(fp_route = fopen("/proc/net/ipv6_route", "r"))) {
+    return 0;
+  }
+  while (fgets(line, sizeof(line), fp_route)) {
+    if (sscanf(line, "00000000000000000000000000000000 00 "
+                     "00000000000000000000000000000000 00 "
+                     "%8" SCNx32 "%8" SCNx32 "%8" SCNx32 "%8" SCNx32 
+                     "%*s %*s %*s %" SCNx32 " %15s",
+                         &nhop.s6_addr32[0],
+                         &nhop.s6_addr32[1],
+                         &nhop.s6_addr32[2],
+                         &nhop.s6_addr32[3],
+                         &rflags,
+                         ifname) && !((rflags & RTF_NONEXTHOP) | (rflags & RTF_REJECT)) ) {
+      for(i=0;i<4;i++) {
+        nhop.s6_addr32[i] = htonl(nhop.s6_addr32[i]);
+      }
+      printf("ip -6 route add %s/%d via %s dev %s table %d\n",
+        dmr_prefix, dmr_prefix_len,
+        inet_ntop(AF_INET6, &nhop, v6addr, sizeof(v6addr)),
+        ifname,
+        ROUTE_TABLE);
+      found_default = 1;
+    }
+  }
+
+  fclose(fp_route);
+  return (found_default ? 1 : 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -284,10 +329,13 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 		if(arg_default && arg_translate) {
 			char v6addr[INET6_ADDRSTRLEN];
 
-			printf("echo dmr %s/%d >/proc/mapmint\n", 
+			printf("echo dmr %s/%d >/proc/%s\n", 
 				inet_ntop(AF_INET6, arg_prefix6_val, v6addr, sizeof(v6addr)),
-				arg_prefix6_len);
-			printf("ip -4 route add default dev mapmint\n");
+				arg_prefix6_len, NET_DEVICE_T);
+			printf("ip -4 route add default dev %s\n", NET_DEVICE_T);
+			printf("ip -6 rule add pref %d from all to %s/%d iif %s lookup %d\n",
+				RULE_PREFERENCE, v6addr, arg_prefix6_len, NET_DEVICE_T, ROUTE_TABLE);
+			add_dmr_v6_route(v6addr, arg_prefix6_len);
 		}
 	}
 	if (action == ACTION_START) {
