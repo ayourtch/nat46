@@ -27,11 +27,6 @@ unsigned int nat64_ipv4_input(struct sk_buff *skb);
 int nat64_netdev_create(struct net_device **dev);
 void nat64_netdev_destroy(struct net_device *dev);
 
-static inline void ipv6_addr_copy(struct in6_addr *a1, const struct in6_addr *a2)
-{
-        memcpy(a1, a2, sizeof(struct in6_addr));
-}
-
 static inline uint32_t extract_ipv4(struct in6_addr addr, int prefix)
 {
 	switch(prefix) {
