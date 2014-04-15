@@ -173,11 +173,11 @@ int nat46_set_config(nat46_instance_t *nat46, char *buf, int count) {
       nat46->debug = simple_strtol(get_next_arg(&tail), NULL, 10);
     } else if (arg_name == strstr(arg_name, "local.")) {
       arg_name += strlen("local.");
-      nat46debug(13, "Setting local xlate parameter", 0);
+      nat46debug(13, "Setting local xlate parameter");
       err = try_parse_rule_arg(&nat46->local_rule, arg_name, &tail);
     } else if (arg_name == strstr(arg_name, "remote.")) {
       arg_name += strlen("remote.");
-      nat46debug(13, "Setting remote xlate parameter", 0);
+      nat46debug(13, "Setting remote xlate parameter");
       err = try_parse_rule_arg(&nat46->remote_rule, arg_name, &tail);
     }
   }
@@ -275,7 +275,7 @@ void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_
 
 int ip6_input_not_interested(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
   if (old_skb->protocol != htons(ETH_P_IPV6)) {
-    nat46debug(3, "Not an IPv6 packet", 0);
+    nat46debug(3, "Not an IPv6 packet");
     return 1;
   }
   if(old_skb->len < sizeof(struct ipv6hdr) || ip6h->version != 6) {
@@ -283,7 +283,7 @@ int ip6_input_not_interested(nat46_instance_t *nat46, struct ipv6hdr *ip6h, stru
     return 1;
   }
   if (!(ipv6_addr_type(&ip6h->saddr) & IPV6_ADDR_UNICAST)) {
-    nat46debug(3, "Source address not unicast", ip6h->version);
+    nat46debug(3, "Source address not unicast");
     return 1;
   }
   // FIXME: add the verification that the source is within the DMR
@@ -570,11 +570,11 @@ void nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff
   switch(icmph->type) {
     case ICMP_ECHO:
       icmph->type = ICMPV6_ECHO_REQUEST;
-      nat46debug(3, "ICMP echo request translated into IPv6", icmph->type); 
+      nat46debug(3, "ICMP echo request translated into IPv6"); 
       break;
     case ICMP_ECHOREPLY:
       icmph->type = ICMPV6_ECHO_REPLY;
-      nat46debug(3, "ICMP echo reply translated into IPv6", icmph->type); 
+      nat46debug(3, "ICMP echo reply translated into IPv6"); 
       break;
   }
   iph->protocol = NEXTHDR_ICMP;
@@ -594,10 +594,10 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   int err = -1;
   int truncSize = 0;
 
-  nat46debug(1, "nat46_ipv6_input packet", 0);
+  nat46debug(1, "nat46_ipv6_input packet");
 
   if(ip6_input_not_interested(nat46, ip6h, old_skb)) {
-    nat46debug(1, "nat46_ipv6_input not interested", 0);
+    nat46debug(1, "nat46_ipv6_input not interested");
     goto done;
   }
   nat46debug(1, "nat46_ipv6_input next hdr: %d, len: %d", 
@@ -629,11 +629,11 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
 
 
   if(!xlate_v6_to_v4(&nat46->remote_rule, &hdr->saddr, &v4saddr, sport)) {
-    nat46debug(0, "[nat46] Could not translate remote address v6->v4", 0);
+    nat46debug(0, "[nat46] Could not translate remote address v6->v4");
     goto done;
   }
   if(!xlate_v6_to_v4(&nat46->local_rule, &hdr->daddr, &v4daddr, dport)) {
-    nat46debug(0, "[nat46] Could not translate local address v6->v4", 0);
+    nat46debug(0, "[nat46] Could not translate local address v6->v4");
     goto done;
   }
     
@@ -734,7 +734,7 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr)
 
 int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
   if (old_skb->protocol != htons(ETH_P_IP)) {
-    nat46debug(3, "Not an IPv4 packet", 0);
+    nat46debug(3, "Not an IPv4 packet");
     return 1;
   }
   // FIXME: check source to be within our prefix
@@ -760,7 +760,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   if (ip4_input_not_interested(nat46, hdr4, old_skb)) {
     goto done;
   }
-  nat46debug(1, "nat46_ipv4_input packet", 0);
+  nat46debug(1, "nat46_ipv4_input packet");
 
   if (ntohs(hdr4->tot_len) > 1480) {
     // FIXME: need to send Packet Too Big here.
@@ -780,11 +780,11 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   }
 
   if(!xlate_v4_to_v6(&nat46->remote_rule, &hdr4->daddr, v6daddr, dport)) {
-    nat46debug(0, "[nat46] Could not translate remote address v4->v6", 0);
+    nat46debug(0, "[nat46] Could not translate remote address v4->v6");
     goto done;
   }
   if(!xlate_v4_to_v6(&nat46->local_rule, &hdr4->saddr, v6saddr, sport)) {
-    nat46debug(0, "[nat46] Could not translate local address v4->v6", 0);
+    nat46debug(0, "[nat46] Could not translate local address v4->v6");
     goto done;
   }
 
