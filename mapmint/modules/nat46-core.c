@@ -10,19 +10,6 @@
 #include "nat46-glue.h"
 #include "nat46-core.h"
 
-void xxx_swap_mem(void *ip1, void *ip2, int cnt) {
-  uint8_t *p1 = ip1;
-  uint8_t *p2 = ip2;
-  uint8_t t;
-  int i;
-  for (i=0; i<cnt; i++) { 
-    t = *p1;
-    *p1 = *p2;
-    *p2 = t;
-    p1++; p2++;
-  }
-}
-
 void
 nat46debug_dump(int level, void *addr, int len)
 {
@@ -243,36 +230,6 @@ void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_
     /* ICMPv6 errors */
   }
   ip6h->nexthdr = IPPROTO_ICMP;
-}
-
-
-void nat46_handle_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
-  struct icmp6hdr *icmp6h = NULL;
-  struct ipv6hdr *v6new  = NULL;
-  struct sk_buff *new_skb = NULL;
-  struct icmp6hdr *icmp6new = NULL;
-
-  icmp6h = (struct icmp6hdr *)old_skb->data;
-  skb_pull(old_skb, sizeof(struct icmp6hdr));
-  nat46debug(5, "ICMP6 type: %d", icmp6h->icmp6_type);
-
-  switch(icmp6h->icmp6_type) {
-    case ICMPV6_ECHO_REQUEST:
-      nat46debug(5, "Rcvd echo request, sending echo reply", 0);
-      new_skb = alloc_skb(old_skb->len + sizeof(struct ipv6hdr) + sizeof(struct icmp6hdr), GFP_ATOMIC);
-      memcpy(new_skb->data, ip6h, sizeof(*ip6h));
-      memcpy(new_skb->data + sizeof(*ip6h), icmp6h, sizeof(*icmp6h));
-      memcpy(new_skb->data + sizeof(*ip6h) + sizeof(*icmp6h), old_skb->data, old_skb->len);
-      v6new = (void *)new_skb->data;
-      xxx_swap_mem(&v6new->saddr, &v6new->daddr, 16);
-      icmp6new = (void *)(new_skb->data + sizeof(*ip6h));
-      icmp6new->icmp6_cksum--;
-      icmp6new->icmp6_type++;
-      
-      /* FIXME ip6_forward(new_skb); */
-      break;
-  }
-
 }
 
 
