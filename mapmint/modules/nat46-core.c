@@ -557,7 +557,12 @@ int xlate_nat64_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
 int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id) {
   int ret = 0;
   switch(rule->style) {
-    case NAT46_XLATE_NONE: /* always fail */
+    case NAT46_XLATE_NONE: /* always fail unless it is a host 1:1 translation */
+      if ( (rule->v6_pref_len == 128) && (rule->v4_pref_len == 32) && 
+           (0 == memcmp(pipv4, &rule->v4_pref, sizeof(rule->v4_pref))) ) {
+         memcpy(pipv6, &rule->v6_pref, sizeof(rule->v6_pref));
+         ret = 1;
+      }
       break;
     case NAT46_XLATE_MAP: 
       /* FIXME: add MAP translation */
@@ -574,7 +579,12 @@ int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t 
 int xlate_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id) {
   int ret = 0;
   switch(rule->style) {
-    case NAT46_XLATE_NONE: /* always fail */
+    case NAT46_XLATE_NONE: /* always fail unless it is a host 1:1 translation */
+      if ( (rule->v6_pref_len == 128) && (rule->v4_pref_len == 32) && 
+           (0 == memcmp(pipv6, &rule->v6_pref, sizeof(rule->v6_pref))) ) {
+         memcpy(pipv4, &rule->v4_pref, sizeof(rule->v4_pref));
+         ret = 1;
+      }
       break;
     case NAT46_XLATE_MAP: 
       /* FIXME: add MAP translation */
