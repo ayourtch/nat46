@@ -1,0 +1,69 @@
+ABOUT AND USAGE
+---------------
+
+This is a generic stateless NAT46 kernel module for Linux.
+
+It supports multiple simultaneous instances of NAT46 on the same host,
+allowing to implement sophisticated translation strategies just 
+by using routing to direct the packets to the appropriate interface.
+
+Upon loading, it creates a file /proc/net/nat46/control, which is used 
+to interact with it.
+
+echo add <ifname> >/proc/net/nat46/control
+	create a new nat46 interface with a specified name
+
+echo del <ifname> >/proc/net/nat46/control
+	delete the existing nat46 interface with a specified name
+
+echo config <ifname> <cfg-strings> >/proc/net/nat46/control
+	pass the <cfg-strings> data to configuration routine of
+	the respective nat46 interface.
+
+
+
+CODE STRUCTURE
+--------------
+
+There are several groups of files:
+
+nat46-module.*
+	These files deal with the overall Linux module handling: loading / unloading,
+	creating and destroying the /proc control file, as well as parsing the commands
+	to pass on to the netdev portion of the code.
+
+nat46-netdev.*
+	Network device management code. This module accepts the high-level commands and
+	performs the device-level work: locating the devices in the chain, grouping
+	the functions into the device structures, etc. This module adds the pointers 
+	the processing functions which are defined in the core group.
+
+nat46-core.*
+	Core processing routines. These do not do any netdevice/module work, they use 
+	primarily sk_buff and nat64_instance_t data structures in order to operate.
+	They use the Linux kernel and glue functions.
+
+nat46-glue.*
+	These are the "adaptation" functions, over time it is expected there will
+	be almost nothing. The reason for the "glue" code to exist is to share
+	the core code with userland implementations.
+
+
+ACKNOWLEDGEMENTS
+----------------
+
+This code has been inspired or uses some parts of the following:
+
+* CERNET MAP implementation
+
+  https://github.com/cernet/MAP
+
+* Stateful NAT64 kernel module implementation by Julius Kriukas
+
+  https://github.com/fln/nat64
+
+* Stateless NAT46 kernel module implementation by Tomasz Mrugalski
+
+  https://github.com/tomaszmrugalski/ip46nat
+
+
