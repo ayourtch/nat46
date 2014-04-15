@@ -137,10 +137,10 @@ int try_parse_ipv4_prefix(u32 *v4addr, int *pref_len, char *arg) {
 int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
   int err = 0;
   char *val;
-  if (0 == strcmp(arg_name, "v6pref")) {
+  if (0 == strcmp(arg_name, "v6")) {
     err = try_parse_ipv6_prefix(&rule->v6_pref, &rule->v6_pref_len, get_next_arg(ptail)); 
     nat46debug(13, "Set v6 prefix");
-  } else if (0 == strcmp(arg_name, "v4pref")) {
+  } else if (0 == strcmp(arg_name, "v4")) {
     nat46debug(13, "Set v4 prefix");
     err = try_parse_ipv4_prefix(&rule->v4_pref, &rule->v4_pref_len, get_next_arg(ptail));
   } else if (0 == strcmp(arg_name, "style")) {
@@ -184,13 +184,34 @@ int nat46_set_config(nat46_instance_t *nat46, char *buf, int count) {
   return err;
 }
 
+char *xlate_style_to_string(nat46_xlate_style_t style) {
+  switch(style) {
+    case NAT46_XLATE_NONE:
+      return "NONE";
+    case NAT46_XLATE_MAP:
+      return "MAP";
+    case NAT46_XLATE_RFC6052:
+      return "RFC6052";
+  }
+  return "unknown";
+}
 
 /* 
- * Get the nat46 configuration into a supplied buffer (if non-null),
- * return the needed buffer size to get the configuration into.
+ * Get the nat46 configuration into a supplied buffer (if non-null).
  */
 int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
   int ret = 0;
+  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s debug %d";
+
+  ret = snprintf(buf, count, format,
+		&nat46->local_rule.v4_pref, nat46->local_rule.v4_pref_len, 
+		&nat46->local_rule.v6_pref, nat46->local_rule.v6_pref_len, 
+		xlate_style_to_string(nat46->local_rule.style),
+		
+		&nat46->remote_rule.v4_pref, nat46->remote_rule.v4_pref_len, 
+		&nat46->remote_rule.v6_pref, nat46->remote_rule.v6_pref_len, 
+		xlate_style_to_string(nat46->remote_rule.style),
+		nat46->debug);
   return ret;
 }
 

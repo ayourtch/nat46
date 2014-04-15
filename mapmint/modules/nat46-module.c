@@ -46,8 +46,7 @@ static struct proc_dir_entry *nat46_proc_parent;
 
 static int nat46_proc_show(struct seq_file *m, void *v)
 {
-        seq_printf(m,"contents for proc here\n");
-        seq_printf(m,"more contents for proc here\n");
+	nat64_show_all_configs(m);	
         return 0;
 }
 

@@ -185,6 +185,28 @@ int nat46_configure(char *devname, char *buf) {
 	}
 }
 
+void nat64_show_all_configs(struct seq_file *m) {
+        struct net_device *dev;
+        read_lock(&dev_base_lock);
+        dev = first_net_device(&init_net);
+        while (dev) {
+		if(is_nat46(dev)) {
+			nat46_instance_t *nat46 = netdev_priv(dev);
+			int buflen = 1024;
+			char *buf = kmalloc(buflen+1, GFP_KERNEL);
+			seq_printf(m, "add %s\n", dev->name);
+			if(buf) {
+				nat46_get_config(nat46, buf, buflen);
+				seq_printf(m,"config %s %s\n\n", dev->name, buf);
+				kfree(buf);
+			}
+		}
+               	dev = next_net_device(dev);
+	}
+        read_unlock(&dev_base_lock);
+
+}
+
 void nat46_destroy_all(void) {
         struct net_device *dev;
         struct net_device *nat46dev;

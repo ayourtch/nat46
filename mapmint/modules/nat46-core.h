@@ -58,6 +58,8 @@ void nat46_ipv6_input(struct sk_buff *old_skb);
 void nat46_ipv4_input(struct sk_buff *old_skb);
 
 int nat46_set_config(nat46_instance_t *nat46, char *buf, int count);
+int nat46_get_config(nat46_instance_t *nat46, char *buf, int count);
+
 char *get_next_arg(char **ptail);
 nat46_instance_t *get_nat46_instance(struct sk_buff *sk);
 void release_nat46_instance(nat46_instance_t *nat46);
