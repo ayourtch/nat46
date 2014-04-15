@@ -5,7 +5,7 @@
 
 // #define nat46debug(level, format, ...) debug(DBG_V6, level, format, __VA_ARGS__)
 // #define nat46debug(level, format, ...)
-#define nat46debug(level, format, ...) printk(format, __VA_ARGS__)
+#define nat46debug(level, format, ...) printk(format "\n", ##__VA_ARGS__)
 
 // #define nat46_reasm_debug(level, format, ...) debug(DBG_REASM, level, format, __VA_ARGS__)
 #define nat46_reasm_debug(level, format, ...)
@@ -21,16 +21,35 @@ typedef struct {
 #define NAT46_MAX_V6_FRAGS 32
 #define NAT46_SIGNATURE 0x544e3634
 
+
+/* 
+ * A generic v4<->v6 translation structure.
+ * The currently supported translation styles:
+ */
+
+typedef enum {
+  NAT46_XLATE_NONE = 0,
+  NAT46_XLATE_MAP,
+  NAT46_XLATE_RFC6052
+} nat46_xlate_style_t;
+     
+typedef struct {
+  nat46_xlate_style_t style;
+  struct in6_addr v6_pref;
+  int 		  v6_pref_len;
+  u32		  v4_pref;
+  int             v4_pref_len;
+  int		  ea_len;
+} nat46_xlate_rule_t;
+
+
 typedef struct {
   u32 sig; /* nat46 signature */
   int debug;
 
-  /* Fixed portion of the IPv6 address on my side */
-  struct in6_addr my_v6bits;
-  struct in6_addr my_v6mask;
-  struct in6_addr nat64pref;
-  u32		  my_v4addr;
-  int nat64pref_len;
+  nat46_xlate_rule_t local_rule;
+  nat46_xlate_rule_t remote_rule;
+
   reasm_item_t frags[NAT46_MAX_V6_FRAGS];
   int nfrags;
 } nat46_instance_t;

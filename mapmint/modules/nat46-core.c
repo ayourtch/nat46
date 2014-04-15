@@ -114,11 +114,51 @@ int try_parse_ipv6_prefix(struct in6_addr *pref, int *pref_len, char *arg) {
   return err;
 }
 
-int try_parse_v4_addr(u32 *v4addr, char *arg) {
-  int err = (1 != in4_pton(arg, -1, (u8 *)v4addr, '/', NULL));
+int try_parse_ipv4_prefix(u32 *v4addr, int *pref_len, char *arg) {
+  int err = 0;
+  char *arg_plen = strchr(arg, '/');
+  if (arg_plen) {
+    *arg_plen++ = 0;
+    if (pref_len) {
+      *pref_len = simple_strtol(arg_plen, NULL, 10);
+    }
+  }
+  err = (1 != in4_pton(arg, -1, (u8 *)v4addr, '/', NULL));
   return err;
 }
 
+
+/* 
+ * parse a rule argument and put config into a rule.
+ * advance the tail to prepare for the next arg parsing.
+ * destructive.
+ */ 
+
+int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
+  int err = 0;
+  char *val;
+  if (0 == strcmp(arg_name, "v6pref")) {
+    err = try_parse_ipv6_prefix(&rule->v6_pref, &rule->v6_pref_len, get_next_arg(ptail)); 
+    nat46debug(13, "Set v6 prefix");
+  } else if (0 == strcmp(arg_name, "v4pref")) {
+    nat46debug(13, "Set v4 prefix");
+    err = try_parse_ipv4_prefix(&rule->v4_pref, &rule->v4_pref_len, get_next_arg(ptail));
+  } else if (0 == strcmp(arg_name, "style")) {
+    nat46debug(13, "Set v4 style");
+    val = get_next_arg(ptail);
+    if (0 == strcmp("MAP", val)) {
+      rule->style = NAT46_XLATE_MAP;
+    } else if (0 == strcmp("RFC6052", val)) {
+      rule->style = NAT46_XLATE_RFC6052;
+    } else if (0 == strcmp("NONE", val)) {
+      rule->style = NAT46_XLATE_NONE;
+    } else {
+      err = 1;
+    }
+  }
+  return err;
+}
+  
 /* 
  * Parse the config commands in the buffer, 
  * destructive (puts zero between the args) 
@@ -131,14 +171,14 @@ int nat46_set_config(nat46_instance_t *nat46, char *buf, int count) {
   while ((0 == err) && (NULL != (arg_name = get_next_arg(&tail)))) {
     if (0 == strcmp(arg_name, "debug")) {
       nat46->debug = simple_strtol(get_next_arg(&tail), NULL, 10);
-    } else if (0 == strcmp(arg_name, "nat64pref")) {
-      err = try_parse_ipv6_prefix(&nat46->nat64pref, &nat46->nat64pref_len, get_next_arg(&tail)); 
-    } else if (0 == strcmp(arg_name, "v6bits")) {
-      err = try_parse_ipv6_prefix(&nat46->my_v6bits, NULL, get_next_arg(&tail)); 
-    } else if (0 == strcmp(arg_name, "v6mask")) {
-      err = try_parse_ipv6_prefix(&nat46->my_v6mask, NULL, get_next_arg(&tail)); 
-    } else if (0 == strcmp(arg_name, "v4addr")) {
-      err = try_parse_v4_addr(&nat46->my_v4addr, get_next_arg(&tail));
+    } else if (arg_name == strstr(arg_name, "local.")) {
+      arg_name += strlen("local.");
+      nat46debug(13, "Setting local xlate parameter", 0);
+      err = try_parse_rule_arg(&nat46->local_rule, arg_name, &tail);
+    } else if (arg_name == strstr(arg_name, "remote.")) {
+      arg_name += strlen("remote.");
+      nat46debug(13, "Setting remote xlate parameter", 0);
+      err = try_parse_rule_arg(&nat46->remote_rule, arg_name, &tail);
     }
   }
   return err;
@@ -392,76 +432,78 @@ From RFC6052, section 2.2:
 
 ********************************************************************/
 
-void v4_to_nat64(nat46_instance_t *nat46, void *pipv4, void *pipv6) {
+void xlate_v4_to_nat64(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6) {
   char *ipv4 = pipv4;
   char *ipv6 = pipv6;
 
   /* 'u' byte and suffix are zero */ 
   memset(&ipv6[8], 0, 8); 
-  switch(nat46->nat64pref_len) {
+  switch(rule->v6_pref_len) {
     case 32:
-      memcpy(ipv6, &nat46->nat64pref, 4);
+      memcpy(ipv6, &rule->v6_pref, 4);
       memcpy(&ipv6[4], ipv4, 4);
       break;
     case 40:
-      memcpy(ipv6, &nat46->nat64pref, 5);
+      memcpy(ipv6, &rule->v6_pref, 5);
       memcpy(&ipv6[5], ipv4, 3);
       ipv6[9] = ipv4[3];
       break;
     case 48:
-      memcpy(ipv6, &nat46->nat64pref, 6);
+      memcpy(ipv6, &rule->v6_pref, 6);
       ipv6[6] = ipv4[0];
       ipv6[7] = ipv4[1];
       ipv6[9] = ipv4[2];
       ipv6[10] = ipv4[3];
       break;
     case 56:
-      memcpy(ipv6, &nat46->nat64pref, 7);
+      memcpy(ipv6, &rule->v6_pref, 7);
       ipv6[7] = ipv4[0];
       ipv6[9] = ipv4[1];
       ipv6[10] = ipv4[2];
       ipv6[11] = ipv4[3];
       break;
     case 64:
-      memcpy(ipv6, &nat46->nat64pref, 8);
+      memcpy(ipv6, &rule->v6_pref, 8);
       memcpy(&ipv6[9], ipv4, 4);
       break;
     case 96:
-      memcpy(ipv6, &nat46->nat64pref, 12);
+      memcpy(ipv6, &rule->v6_pref, 12);
       memcpy(&ipv6[12], ipv4, 4);
       break;
   }
 }
 
-int nat64_to_v4(nat46_instance_t *nat46, void *pipv6, void *pipv4) {
+int xlate_nat64_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
   char *ipv4 = pipv4;
   char *ipv6 = pipv6;
   int cmp = -1;
-  switch(nat46->nat64pref_len) {
+  int v6_pref_len = rule->v6_pref_len;
+
+  switch(v6_pref_len) {
     case 32:
-      cmp = memcmp(ipv6, &nat46->nat64pref, 4);
+      cmp = memcmp(ipv6, &rule->v6_pref, 4);
       break;
     case 40:
-      cmp = memcmp(ipv6, &nat46->nat64pref, 5);
+      cmp = memcmp(ipv6, &rule->v6_pref, 5);
       break;
     case 48:
-      cmp = memcmp(ipv6, &nat46->nat64pref, 6);
+      cmp = memcmp(ipv6, &rule->v6_pref, 6);
       break;
     case 56:
-      cmp = memcmp(ipv6, &nat46->nat64pref, 7);
+      cmp = memcmp(ipv6, &rule->v6_pref, 7);
       break;
     case 64:
-      cmp = memcmp(ipv6, &nat46->nat64pref, 8);
+      cmp = memcmp(ipv6, &rule->v6_pref, 8);
       break;
     case 96:
-      cmp = memcmp(ipv6, &nat46->nat64pref, 12);
+      cmp = memcmp(ipv6, &rule->v6_pref, 12);
       break;
   }
   if (cmp) {
     /* Not in NAT64 prefix */
     return 0;
   }
-  switch(nat46->nat64pref_len) {
+  switch(v6_pref_len) {
     case 32:
       memcpy(ipv4, &ipv6[4], 4);
       break;
@@ -491,6 +533,37 @@ int nat64_to_v4(nat46_instance_t *nat46, void *pipv6, void *pipv4) {
   return 1;
 }
 
+int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id) {
+  int ret = 0;
+  switch(rule->style) {
+    case NAT46_XLATE_NONE: /* always fail */
+      break;
+    case NAT46_XLATE_MAP: 
+      /* FIXME: add MAP translation */
+      break;
+    case NAT46_XLATE_RFC6052:
+      xlate_v4_to_nat64(rule, pipv4, pipv6);
+      /* NAT46 rules using RFC6052 always succeed since they can map any IPv4 address */
+      ret = 1;
+      break;
+  }
+  return ret;
+}
+
+int xlate_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id) {
+  int ret = 0;
+  switch(rule->style) {
+    case NAT46_XLATE_NONE: /* always fail */
+      break;
+    case NAT46_XLATE_MAP: 
+      /* FIXME: add MAP translation */
+      break;
+    case NAT46_XLATE_RFC6052:
+      ret = xlate_nat64_to_v4(rule, pipv6, pipv4);
+      break;
+  }
+  return ret;
+}
 
 void nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
   struct icmphdr *icmph = (struct icmphdr *)(iph+1);
@@ -512,7 +585,7 @@ void nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff
 void nat46_ipv6_input(struct sk_buff *old_skb) {
   struct ipv6hdr *ip6h = ipv6_hdr(old_skb);
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
-  uint16_t proto;
+  uint16_t proto, sport = 0, dport = 0;
 
   struct ipv6hdr * hdr = ipv6_hdr(old_skb);
   struct iphdr * iph;
@@ -555,8 +628,15 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   }
 
 
-  nat64_to_v4(nat46, &hdr->saddr, &v4saddr);
-  v4daddr = xxx_my_v4addr;
+  if(!xlate_v6_to_v4(&nat46->remote_rule, &hdr->saddr, &v4saddr, sport)) {
+    nat46debug(0, "[nat46] Could not translate remote address v6->v4", 0);
+    goto done;
+  }
+  if(!xlate_v6_to_v4(&nat46->local_rule, &hdr->daddr, &v4daddr, dport)) {
+    nat46debug(0, "[nat46] Could not translate local address v6->v4", 0);
+    goto done;
+  }
+    
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC); // other possible option: GFP_ATOMIC
 
@@ -664,6 +744,7 @@ int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, struct 
 void nat46_ipv4_input(struct sk_buff *old_skb) {
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
   struct sk_buff *new_skb;
+  uint16_t sport = 0, dport = 0;
 
   int tclass = 0;
   int flowlabel = 0;
@@ -675,15 +756,11 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
 
   memset(v6saddr, 1, 16);
   memset(v6daddr, 2, 16);
-  v4_to_nat64(nat46, &hdr4->daddr, v6daddr);
-  memcpy(v6saddr, &nat46->my_v6bits, 16);
-  memcpy(&xxx_my_v4addr, &hdr4->saddr, 4);
 
   if (ip4_input_not_interested(nat46, hdr4, old_skb)) {
     goto done;
   }
   nat46debug(1, "nat46_ipv4_input packet", 0);
-  // nat46debug_dump(1, old_skb->data, old_skb->len);
 
   if (ntohs(hdr4->tot_len) > 1480) {
     // FIXME: need to send Packet Too Big here.
@@ -700,6 +777,15 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
     default:
       nat46debug(3, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP are supported.", hdr4->protocol);
       goto done;
+  }
+
+  if(!xlate_v4_to_v6(&nat46->remote_rule, &hdr4->daddr, v6daddr, dport)) {
+    nat46debug(0, "[nat46] Could not translate remote address v4->v6", 0);
+    goto done;
+  }
+  if(!xlate_v4_to_v6(&nat46->local_rule, &hdr4->saddr, v6saddr, sport)) {
+    nat46debug(0, "[nat46] Could not translate local address v4->v6", 0);
+    goto done;
   }
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC);
