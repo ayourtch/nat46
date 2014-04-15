@@ -143,6 +143,10 @@ int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
   } else if (0 == strcmp(arg_name, "v4")) {
     nat46debug(13, "Set v4 prefix");
     err = try_parse_ipv4_prefix(&rule->v4_pref, &rule->v4_pref_len, get_next_arg(ptail));
+  } else if (0 == strcmp(arg_name, "ea-len")) {
+    nat46debug(13, "Set ea-len");
+    val = get_next_arg(ptail);
+    rule->ea_len = simple_strtol(val, NULL, 10);
   } else if (0 == strcmp(arg_name, "style")) {
     nat46debug(13, "Set v4 style");
     val = get_next_arg(ptail);
@@ -201,16 +205,16 @@ char *xlate_style_to_string(nat46_xlate_style_t style) {
  */
 int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
   int ret = 0;
-  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s debug %d";
+  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d debug %d";
 
   ret = snprintf(buf, count, format,
 		&nat46->local_rule.v4_pref, nat46->local_rule.v4_pref_len, 
 		&nat46->local_rule.v6_pref, nat46->local_rule.v6_pref_len, 
-		xlate_style_to_string(nat46->local_rule.style),
+		xlate_style_to_string(nat46->local_rule.style), nat46->local_rule.ea_len,
 		
 		&nat46->remote_rule.v4_pref, nat46->remote_rule.v4_pref_len, 
 		&nat46->remote_rule.v6_pref, nat46->remote_rule.v6_pref_len, 
-		xlate_style_to_string(nat46->remote_rule.style),
+		xlate_style_to_string(nat46->remote_rule.style), nat46->remote_rule.ea_len,
 		nat46->debug);
   return ret;
 }
