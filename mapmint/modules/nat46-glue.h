@@ -3,6 +3,8 @@
 #include <linux/icmp.h>
 #include <linux/skbuff.h>
 #include <net/ip6_route.h>
+#include <linux/inet.h>
+#include <net/ip6_checksum.h>
 
 
 #ifndef IP6_OFFSET
