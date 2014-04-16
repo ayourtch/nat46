@@ -898,7 +898,6 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   struct iphdr * iph;
   __u32 v4saddr, v4daddr;
   struct sk_buff * new_skb = 0;
-  int err = -1;
   int truncSize = 0;
 
   nat46debug(1, "nat46_ipv6_input packet");
@@ -958,14 +957,11 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
 
   /* Remove any debris in the socket control block */
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
-  nat46debug(5, "v4 newskb: peeked: %d nfctinfo: %02x ipvs_property: %02x nfct: %llx", new_skb->peeked, new_skb->nfctinfo, new_skb->ipvs_property, new_skb->nfct);
-/*
-  new_skb->nf_trace = 1;
+  new_skb->nf_trace = 0;
   new_skb->peeked = 0;
   new_skb->nfctinfo = 0;
   new_skb->ipvs_property = 0;
   new_skb->nfct = NULL;
-*/
 
   /* modify packet: actual IPv6->IPv4 transformation */
   truncSize = sizeof(struct ipv6hdr) - sizeof(struct iphdr); /* chop first 20 bytes */
@@ -984,24 +980,16 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
 
   /* iph->tot_len = htons(new_skb->len); // almost good, but it may cause troubles with sizeof(IPv6 pkt)<64 (padding issue) */
   iph->tot_len = htons( ntohs(ip6h->payload_len)+ 20 /*sizeof(ipv4hdr)*/ );
-  if (ntohs(iph->tot_len) > 2000) {
-    nat46debug(0, "Too big len: %d", ntohs(iph->tot_len));
-    nat46debug(0, "IPv6 payload len was: %d", ntohs(ip6h->payload_len));
+  if (ntohs(iph->tot_len) >= 2000) {
+    nat46debug(0, "Too big IP len: %d", ntohs(iph->tot_len));
   }
-  assert(ntohs(iph->tot_len) < 2000);
   iph->check = 0;
   iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
   new_skb->protocol = htons(ETH_P_IP);
 
   ipv4_update_csum(new_skb, iph); /* update L4 (TCP/UDP/ICMP) checksum */
 
-  /* try to find route for this packet */
-  err = ip_route_input(new_skb, v4daddr, v4saddr, 0, new_skb->dev);
-
-  if (err==0) {
-    /* FIXME err = ip_forward(new_skb); */
-  }
-  new_skb->dev = nat46->nat46_dev;
+  new_skb->dev = old_skb->dev;
   nat46debug(5, "about to send v4 packet, flags: %02x",  IPCB(new_skb)->flags);
   netif_rx(new_skb);
 
@@ -1163,10 +1151,9 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   // FIXME: check if you can not fit the packet into the cached MTU
   // if (dst_mtu(skb_dst(new_skb))==0) { }
 
-  new_skb->dev = nat46->nat46_dev;
+  new_skb->dev = old_skb->dev;
 
   netif_rx(new_skb);
-
 
 done:
   release_nat46_instance(nat46);

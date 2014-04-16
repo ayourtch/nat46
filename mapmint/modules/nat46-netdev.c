@@ -56,7 +56,6 @@ static void nat46_netdev_setup(struct net_device *dev)
 
 	memset(nat46, 0, sizeof(nat46_instance_t));
 	nat46->sig = NAT46_SIGNATURE;
-	nat46->nat46_dev = dev;
 
         dev->netdev_ops = &nat46_netdev_ops;
         dev->type = ARPHRD_NONE;

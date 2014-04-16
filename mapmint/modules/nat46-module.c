@@ -122,7 +122,7 @@ static int __init nat46_init(void)
 {
         int ret = 0;
 
-        printk("nat46: module loaded.\n");
+        printk("nat46: module (compiled %s %s) loaded.\n", __DATE__, __TIME__);
 	ret = create_nat46_proc_entry();
 	if(ret) {
 		goto error;
