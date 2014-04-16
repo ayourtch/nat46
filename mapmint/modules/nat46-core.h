@@ -40,6 +40,7 @@ typedef struct {
   u32		  v4_pref;
   int             v4_pref_len;
   int		  ea_len;
+  int             psid_offset;
 } nat46_xlate_rule_t;
 
 

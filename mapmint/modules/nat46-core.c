@@ -205,16 +205,16 @@ char *xlate_style_to_string(nat46_xlate_style_t style) {
  */
 int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
   int ret = 0;
-  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d debug %d";
+  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d debug %d";
 
   ret = snprintf(buf, count, format,
 		&nat46->local_rule.v4_pref, nat46->local_rule.v4_pref_len, 
 		&nat46->local_rule.v6_pref, nat46->local_rule.v6_pref_len, 
-		xlate_style_to_string(nat46->local_rule.style), nat46->local_rule.ea_len,
+		xlate_style_to_string(nat46->local_rule.style), nat46->local_rule.ea_len, nat46->local_rule.psid_offset,
 		
 		&nat46->remote_rule.v4_pref, nat46->remote_rule.v4_pref_len, 
 		&nat46->remote_rule.v6_pref, nat46->remote_rule.v6_pref_len, 
-		xlate_style_to_string(nat46->remote_rule.style), nat46->remote_rule.ea_len,
+		xlate_style_to_string(nat46->remote_rule.style), nat46->remote_rule.ea_len, nat46->remote_rule.psid_offset,
 		nat46->debug);
   return ret;
 }
@@ -279,22 +279,26 @@ void ipv4_update_csum(struct sk_buff * skb, struct iphdr *iph) {
 }
 
 
-void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
+static uint16_t nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
   struct icmp6hdr *icmp6h = (struct icmp6hdr *)(ip6h + 1);
+  uint16_t ret = 0;
   if(icmp6h->icmp6_type & 128) {
     /* Informational ICMP */
     switch(icmp6h->icmp6_type) {
       case ICMPV6_ECHO_REQUEST:
         icmp6h->icmp6_type = ICMP_ECHO;
+        ret = icmp6h->icmp6_identifier;
         break;
       case ICMPV6_ECHO_REPLY:
         icmp6h->icmp6_type = ICMP_ECHOREPLY;
+        ret = icmp6h->icmp6_identifier;
         break;
     }
   } else {
     /* ICMPv6 errors */
   }
   ip6h->nexthdr = IPPROTO_ICMP;
+  return ret;
 }
 
 
@@ -558,6 +562,260 @@ int xlate_nat64_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
   return 1;
 }
 
+/*
+
+The below bitarray copy code is from 
+
+http://stackoverflow.com/questions/3534535/whats-a-time-efficient-algorithm-to-copy-unaligned-bit-arrays
+ 
+*/
+
+#define CHAR_BIT 8
+#define PREPARE_FIRST_COPY()                                      \
+    do {                                                          \
+    if (src_len >= (CHAR_BIT - dst_offset_modulo)) {              \
+        *dst     &= reverse_mask[dst_offset_modulo];              \
+        src_len -= CHAR_BIT - dst_offset_modulo;                  \
+    } else {                                                      \
+        *dst     &= reverse_mask[dst_offset_modulo]               \
+              | reverse_mask_xor[dst_offset_modulo + src_len + 1];\
+         c       &= reverse_mask[dst_offset_modulo + src_len    ];\
+        src_len = 0;                                              \
+    } } while (0)
+
+
+static void
+bitarray_copy(const void *src_org, int src_offset, int src_len,
+                    void *dst_org, int dst_offset)
+{
+/*
+    static const unsigned char mask[] =
+        { 0x55, 0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff };
+*/
+    static const unsigned char reverse_mask[] =
+        { 0x55, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff };
+    static const unsigned char reverse_mask_xor[] =
+        { 0xff, 0x7f, 0x3f, 0x1f, 0x0f, 0x07, 0x03, 0x01, 0x00 };
+
+    if (src_len) {
+        const unsigned char *src;
+              unsigned char *dst;
+        int                  src_offset_modulo,
+                             dst_offset_modulo;
+
+        src = src_org + (src_offset / CHAR_BIT);
+        dst = dst_org + (dst_offset / CHAR_BIT);
+
+        src_offset_modulo = src_offset % CHAR_BIT;
+        dst_offset_modulo = dst_offset % CHAR_BIT;
+
+        if (src_offset_modulo == dst_offset_modulo) {
+            int              byte_len;
+            int              src_len_modulo;
+            if (src_offset_modulo) {
+                unsigned char   c;
+
+                c = reverse_mask_xor[dst_offset_modulo]     & *src++;
+
+                PREPARE_FIRST_COPY();
+                *dst++ |= c;
+            }
+
+            byte_len = src_len / CHAR_BIT;
+            src_len_modulo = src_len % CHAR_BIT;
+
+            if (byte_len) {
+                memcpy(dst, src, byte_len);
+                src += byte_len;
+                dst += byte_len;
+            }
+            if (src_len_modulo) {
+                *dst     &= reverse_mask_xor[src_len_modulo];
+                *dst |= reverse_mask[src_len_modulo]     & *src;
+            }
+        } else {
+            int             bit_diff_ls,
+                            bit_diff_rs;
+            int             byte_len;
+            int             src_len_modulo;
+            unsigned char   c;
+            /*
+             * Begin: Line things up on destination. 
+             */
+            if (src_offset_modulo > dst_offset_modulo) {
+                bit_diff_ls = src_offset_modulo - dst_offset_modulo;
+                bit_diff_rs = CHAR_BIT - bit_diff_ls;
+
+                c = *src++ << bit_diff_ls;
+                c |= *src >> bit_diff_rs;
+                c     &= reverse_mask_xor[dst_offset_modulo];
+            } else {
+                bit_diff_rs = dst_offset_modulo - src_offset_modulo;
+                bit_diff_ls = CHAR_BIT - bit_diff_rs;
+
+                c = *src >> bit_diff_rs     &
+                    reverse_mask_xor[dst_offset_modulo];
+            }
+            PREPARE_FIRST_COPY();
+            *dst++ |= c;
+
+            /*
+             * Middle: copy with only shifting the source. 
+             */
+            byte_len = src_len / CHAR_BIT;
+
+            while (--byte_len >= 0) {
+                c = *src++ << bit_diff_ls;
+                c |= *src >> bit_diff_rs;
+                *dst++ = c;
+            }
+
+            /*
+             * End: copy the remaing bits; 
+             */
+            src_len_modulo = src_len % CHAR_BIT;
+            if (src_len_modulo) {
+                c = *src++ << bit_diff_ls;
+                c |= *src >> bit_diff_rs;
+                c     &= reverse_mask[src_len_modulo];
+
+                *dst     &= reverse_mask_xor[src_len_modulo];
+                *dst |= c;
+            }
+        }
+    }
+}
+
+int xlate_map_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id) {
+  int ret = 0;
+  u32 *pv4u32 = pipv4;
+  uint8_t *p6 = pipv6;
+
+  uint16_t psid;
+  uint8_t psid_bits_len;
+  uint8_t v4_lsb_bits_len = 32 - rule->v4_pref_len;
+
+
+  /* check that the ipv4 address is within the IPv4 map domain and reject if not */
+
+  if ( (ntohl(*pv4u32) & (0xffffffff << v4_lsb_bits_len)) != ntohl(rule->v4_pref) ) {
+    nat46debug(0, "xlate_map_v4_to_v6: IPv4 address %pI4 outside of MAP domain %pI4/%d", pipv4, &rule->v4_pref, rule->v4_pref_len);
+    return 0;
+  }
+
+  if (rule->ea_len < (32 - rule->v4_pref_len) ) {
+    nat46debug(0, "xlate_map_v4_to_v6: rule->ea_len < (32 - rule->v4_pref_len)");
+    return 0;
+  } 
+  /* zero out the IPv6 address */
+  memset(pipv6, 0, 16);
+
+  psid_bits_len = rule->ea_len - (32 - rule->v4_pref_len);
+  psid = ntohs(l4id) >> (16 - psid_bits_len - rule->psid_offset);
+
+  /* 
+   *     create the IID. pay the attention there can be two formats:
+   *
+   *     draft-ietf-softwire-map-t-00:
+   *
+   *
+   *   +--+---+---+---+---+---+---+---+---+
+   *   |PL|   8  16  24  32  40  48  56   |
+   *   +--+---+---+---+---+---+---+---+---+
+   *   |64| u | IPv4 address  |  PSID | 0 |
+   *   +--+---+---+---+---+---+---+---+---+
+   *
+   *
+   *     latest draft-ietf-softwire-map-t:
+   *  
+   *   |        128-n-o-s bits            |
+   *   | 16 bits|    32 bits     | 16 bits|
+   *   +--------+----------------+--------+
+   *   |   0    |  IPv4 address  |  PSID  |
+   *   +--------+----------------+--------+    
+   *
+   *   In the case of an IPv4 prefix, the IPv4 address field is right-padded
+   *   with zeros up to 32 bits.  The PSID is zero left-padded to create a
+   *   16 bit field.  For an IPv4 prefix or a complete IPv4 address, the
+   *   PSID field is zero.
+   *
+   *   If the End-user IPv6 prefix length is larger than 64, the most
+   *   significant parts of the interface identifier is overwritten by the
+   *   prefix.
+   *  
+   */
+  if (1) {
+    p6[8] = p6[9] = 0;
+    p6[10] = 0xff & (ntohl(*pv4u32) >> 24);
+    p6[11] = 0xff & (ntohl(*pv4u32) >> 16);
+    p6[12] = 0xff & (ntohl(*pv4u32) >> 8);
+    p6[13] = 0xff & (ntohl(*pv4u32));
+    p6[14] = 0xff & (psid >> 8);
+    p6[15] = 0xff & (psid);
+  } else {
+    p6[8]  = 0;
+    p6[9]  = 0xff & (ntohl(*pv4u32) >> 24);
+    p6[10] = 0xff & (ntohl(*pv4u32) >> 16);
+    p6[11] = 0xff & (ntohl(*pv4u32) >> 8);
+    p6[12] = 0xff & (ntohl(*pv4u32));
+    p6[13] = 0xff & (psid >> 8);
+    p6[14] = 0xff & (psid);
+    p6[15] = 0;
+    /* old EID */
+  }
+ 
+  /* copy the necessary part of domain IPv6 prefix into place, w/o overwriting the existing data */
+  bitarray_copy(&rule->v6_pref, 0, rule->v6_pref_len, p6, 0);
+
+  if (v4_lsb_bits_len) {
+    /* insert the lower 32-v4_pref_len bits of IPv4 address at rule->v6_pref_len */
+    bitarray_copy(pipv4, rule->v4_pref_len, v4_lsb_bits_len, p6, rule->v6_pref_len);
+  }
+
+  if (psid_bits_len) {
+    /* insert the psid bits at rule->v6_pref_len + v4_lsb_bits */
+    bitarray_copy(&l4id, rule->psid_offset, psid_bits_len, p6, rule->v6_pref_len + v4_lsb_bits_len);
+  }
+
+  ret = 1;
+
+  return ret;
+}
+
+int xlate_map_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id) {
+  int ret = 0;
+
+  uint8_t psid_bits_len;
+  uint8_t v4_lsb_bits_len = 32 - rule->v4_pref_len;
+
+
+  if (memcmp(pipv6, &rule->v6_pref, rule->v6_pref_len/8)) {
+    /* address not within the MAP IPv6 prefix */
+    nat46debug(0, "xlate_map_v6_to_v4: IPv6 address %pI6 outside of MAP domain %pI6/%d", pipv6, &rule->v6_pref, rule->v6_pref_len);
+    return 0;
+  }
+  if (rule->v6_pref_len % 8) {
+    /* FIXME: add comparison here for the remaining 1..7 bits, if v6_pref_len % 8 is not zero */
+  }
+
+  if (rule->ea_len < (32 - rule->v4_pref_len) ) {
+    nat46debug(0, "xlate_map_v6_to_v4: rule->ea_len < (32 - rule->v4_pref_len)");
+    return 0;
+  } 
+  psid_bits_len = rule->ea_len - (32 - rule->v4_pref_len);
+
+  memcpy(pipv4, &rule->v4_pref, 4);
+  if (v4_lsb_bits_len) {
+    bitarray_copy(pipv6, rule->v6_pref_len, v4_lsb_bits_len, pipv4, rule->v4_pref_len);
+  }
+  /* 
+   * FIXME: I do not verify the PSID here. The idea is that if the destination port is incorrect, this
+   * will be caught in the NAT44 module. 
+   */ 
+  ret = 1;
+  return ret;
+}
+
 int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id) {
   int ret = 0;
   switch(rule->style) {
@@ -569,7 +827,7 @@ int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t 
       }
       break;
     case NAT46_XLATE_MAP: 
-      /* FIXME: add MAP translation */
+      ret = xlate_map_v4_to_v6(rule, pipv4, pipv6, l4id);
       break;
     case NAT46_XLATE_RFC6052:
       xlate_v4_to_nat64(rule, pipv4, pipv6);
@@ -591,7 +849,7 @@ int xlate_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t 
       }
       break;
     case NAT46_XLATE_MAP: 
-      /* FIXME: add MAP translation */
+      ret = xlate_map_v6_to_v4(rule, pipv6, pipv4, l4id);
       break;
     case NAT46_XLATE_RFC6052:
       ret = xlate_nat64_to_v4(rule, pipv6, pipv4);
@@ -600,19 +858,24 @@ int xlate_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t 
   return ret;
 }
 
-void nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
+static uint16_t nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
   struct icmphdr *icmph = (struct icmphdr *)(iph+1);
+  uint16_t ret = 0;
+
   switch(icmph->type) {
     case ICMP_ECHO:
       icmph->type = ICMPV6_ECHO_REQUEST;
+      ret = icmph->un.echo.id;
       nat46debug(3, "ICMP echo request translated into IPv6"); 
       break;
     case ICMP_ECHOREPLY:
       icmph->type = ICMPV6_ECHO_REPLY;
+      ret = icmph->un.echo.id;
       nat46debug(3, "ICMP echo reply translated into IPv6"); 
       break;
   }
   iph->protocol = NEXTHDR_ICMP;
+  return ret;
 }
 
 
@@ -651,11 +914,20 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   }
   
   switch(proto) {
-    case NEXTHDR_TCP:
-    case NEXTHDR_UDP:
+    case NEXTHDR_TCP: {
+      struct tcphdr *th = tcp_hdr(old_skb);
+      sport = th->source;
+      dport = th->dest;
       break;
+      }
+    case NEXTHDR_UDP: {
+      struct udphdr *udp = udp_hdr(old_skb);
+      sport = udp->source;
+      dport = udp->dest;
+      break;
+      }
     case NEXTHDR_ICMP:
-      nat46_fixup_icmp6(nat46, ip6h, old_skb);
+      sport = dport = nat46_fixup_icmp6(nat46, ip6h, old_skb);
       break;
     default:
       nat46debug(0, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP6 are supported.", proto);
@@ -803,11 +1075,20 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   }
 
   switch(hdr4->protocol) {
-    case IPPROTO_TCP:
-    case IPPROTO_UDP:
+    case IPPROTO_TCP: {
+      struct tcphdr *th = tcp_hdr(old_skb);
+      sport = th->source;
+      dport = th->dest;
       break;
+      }
+    case IPPROTO_UDP: {
+      struct udphdr *udp = udp_hdr(old_skb);
+      sport = udp->source;
+      dport = udp->dest;
+      break;
+      }
     case IPPROTO_ICMP:
-      nat46_fixup_icmp(nat46, hdr4, old_skb);
+      sport = dport = nat46_fixup_icmp(nat46, hdr4, old_skb);
       break;
     default:
       nat46debug(3, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP are supported.", hdr4->protocol);

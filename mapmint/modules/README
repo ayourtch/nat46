@@ -53,6 +53,7 @@ this rule:
 		the 1:1 mapping.
 
 	<rule>.ea-len
+	<rule>.psid-offset
 		ignored in this translation style
 
 	NB: in the future this translation mechanism may be extended to allow 1:1
@@ -72,6 +73,7 @@ this rule:
 		For backwards compatibility it should be 0.0.0.0/0
 
 	<rule>.ea-len
+	<rule>.psid-offset
 		ignored in this translation style
 
 <rule>.style MAP
@@ -88,6 +90,9 @@ this rule:
 		this parameter defines the length of the embedded address bits
 		within the IPv6 prefix that has been allocated.
 
+	<rule>.psid-offset
+		this parameter specifies how many bits to the right to shift
+		the bits of the psid within the port value.
 
 
 CODE STRUCTURE
