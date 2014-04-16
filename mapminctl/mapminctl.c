@@ -379,6 +379,8 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 					PROC_CTL_FILE);
 
 				if(arg_psid_seen && arg_publicaddr_seen) {
+					printf("echo config %s local.ea-len %d >/proc/%s\n", 
+						NET_DEVICE_T, psidbits + (32 - arg_publicaddr_len), PROC_CTL_FILE);
 					if (getenv("MAP_VERSION") && (0 == strcmp("0", getenv("MAP_VERSION")))) {
 						pc[9] = (arg_publicaddr_val >> 24) & 0xff;
 						pc[10] = (arg_publicaddr_val >> 16) & 0xff;
