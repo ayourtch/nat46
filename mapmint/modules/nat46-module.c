@@ -86,7 +86,7 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 			nat46_destroy(devname);
 		} else if (0 == strcmp(arg_name, "config")) {
 			devname = get_next_arg(&tail);
-			printk(KERN_INFO "nat46: deleting device (%s)\n", devname);
+			printk(KERN_INFO "nat46: configure device (%s) with '%s'\n", devname, tail);
 			nat46_configure(devname, tail);
 		}
 	}
