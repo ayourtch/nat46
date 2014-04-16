@@ -330,6 +330,7 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 		if(arg_default && arg_translate) {
 			char v6addr[INET6_ADDRSTRLEN];
 			printf("echo add %s >/proc/%s\n", NET_DEVICE_T, PROC_CTL_FILE);
+			printf("ifconfig %s up\n", NET_DEVICE_T);
 			printf("echo config %s remote.style RFC6052 >/proc/%s\n", 
 				NET_DEVICE_T, PROC_CTL_FILE);
 			printf("echo config %s remote.v6 %s/%d >/proc/%s\n", 
@@ -356,14 +357,21 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 				in6_addr_t arg_prefix6_val_bmr;
 				uint8_t *pc = (void *)&arg_prefix6_val_bmr;
 				int psidbits = xlog2(arg_ratio);
+				char *map_rev = "";
 
 				memcpy(arg_prefix6_val_bmr, arg_prefix6_val, sizeof(arg_prefix6_val_bmr));
 		
 				pc[arg_prefix6_len/8] |= 0xff & ((arg_psid << (8-psidbits)) >> (arg_prefix6_len%8));
 				pc[arg_prefix6_len/8 + 1] |= (0xff & (arg_psid << (psidbits + 8 - (arg_prefix6_len % 8)))); 
 
-				printf("echo config %s local.style MAP >/proc/%s\n", 
-					NET_DEVICE_T, PROC_CTL_FILE);
+				printf("echo add %s >/proc/%s\n", NET_DEVICE_T, PROC_CTL_FILE);
+				printf("ifconfig %s up\n", NET_DEVICE_T);
+				if(getenv("MAP_VERSION")) {
+					map_rev = getenv("MAP_VERSION");
+				}
+
+				printf("echo config %s local.style MAP%s >/proc/%s\n", 
+					NET_DEVICE_T, map_rev, PROC_CTL_FILE);
 				printf("echo config %s local.v6 %s/%d >/proc/%s\n", 
 					NET_DEVICE_T, 
 					inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)),
@@ -371,13 +379,23 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 					PROC_CTL_FILE);
 
 				if(arg_psid_seen && arg_publicaddr_seen) {
-					pc[9] = (arg_publicaddr_val >> 24) & 0xff;
-					pc[10] = (arg_publicaddr_val >> 16) & 0xff;
-					pc[11] = (arg_publicaddr_val >> 8) & 0xff;
-					pc[12] = (arg_publicaddr_val ) & 0xff;
+					if (getenv("MAP_VERSION") && (0 == strcmp("0", getenv("MAP_VERSION")))) {
+						pc[9] = (arg_publicaddr_val >> 24) & 0xff;
+						pc[10] = (arg_publicaddr_val >> 16) & 0xff;
+						pc[11] = (arg_publicaddr_val >> 8) & 0xff;
+						pc[12] = (arg_publicaddr_val ) & 0xff;
 
-					pc[13] = (arg_psid >> 8) & 0xff;
-					pc[14] = arg_psid & 0xff;
+						pc[13] = (arg_psid >> 8) & 0xff;
+						pc[14] = arg_psid & 0xff;
+					} else {
+						pc[10] = (arg_publicaddr_val >> 24) & 0xff;
+						pc[11] = (arg_publicaddr_val >> 16) & 0xff;
+						pc[12] = (arg_publicaddr_val >> 8) & 0xff;
+						pc[13] = (arg_publicaddr_val ) & 0xff;
+
+						pc[14] = (arg_psid >> 8) & 0xff;
+						pc[15] = arg_psid & 0xff;
+					}
 
 					printf("ip -6 route add %s/128 dev %s\n", 
 						inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)), NET_DEVICE_T);
