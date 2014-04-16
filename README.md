@@ -54,10 +54,27 @@ Multiple ranges when NATting in iptables
 Alas, folks have removed the support for multiple --to targets within the single statement,
 so you can not fall back to the "next" slice if the range of the ports is already full.
 
-Supposedly one can load-balance between the ranges using -m nth, but this does not prevent 
-the packet drops when the ranges are full. 
+But we can use the "connlimit" iptables extension. 
 
-Let's leave it for later. Maybe something with the syntax of -m has-free-slots could work.  
+With it, we can express the MAP multiple ranges logic with the following configuration:
+
+```
+iptables -t nat -A POSTROUTING -p icmp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:7168-8191
+iptables -t nat -A POSTROUTING -p tcp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:7168-8191
+iptables -t nat -A POSTROUTING -p udp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:7168-8191
+iptables -t nat -A POSTROUTING -p icmp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:11264-12287
+iptables -t nat -A POSTROUTING -p tcp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:11264-12287
+iptables -t nat -A POSTROUTING -p udp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:11264-12287
+iptables -t nat -A POSTROUTING -p icmp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:15360-16383
+iptables -t nat -A POSTROUTING -p tcp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:15360-16383
+iptables -t nat -A POSTROUTING -p udp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:15360-16383
+iptables -t nat -A POSTROUTING -p icmp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:19456-20479
+iptables -t nat -A POSTROUTING -p tcp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:19456-20479
+iptables -t nat -A POSTROUTING -p udp -m connlimit --connlimit-daddr --connlimit-upto 1024 -o mapmint -j SNAT --to 172.17.2.243:19456-20479
+.....
+```
+
+Each line counts the number of connections within this clause, and if the number is bigger than the allocated number of ports - it rolls over.
 
 Compiling
 =========
@@ -77,5 +94,11 @@ then issue:
 This will cause the following to appear in the "make menuconfig":
 
  * Kernel modules -> Network Support -> kmod-mapmint
+ * Network -> mapminctl
 
-This is where the plug and playness ends, because this is a very early code. 
+Just select the "mapminctl", which will also automatically select the "map-mdpc" package
+as well as the kernel module and the required iptables packages.
+
+If you are using the latest version of the openwrt-map feed, then mdpc included 
+there will start using MAPMIN automatically, and announce that in /tmp/map.log
+
