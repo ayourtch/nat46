@@ -45,7 +45,7 @@ endef
 define Package/mapminctl/install
 	$(INSTALL_DIR) $(1)/sbin
 	mkdir $(1)/mapmin-stuff/
-	$(CP) -r ./files/* $(1)/mapmin-stuff/
+	$(CP) -r ./files/* $(1)/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/mapminctl $(1)/sbin/
 endef
 
