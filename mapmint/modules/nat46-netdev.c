@@ -9,6 +9,7 @@
 #include <net/ip6_route.h>
 #include <net/ipv6.h>
 #include "nat46-core.h"
+#include "nat46-module.h"
 
 #define NETDEV_DEFAULT_NAME "nat46."
 
@@ -142,7 +143,9 @@ static struct net_device *find_dev(char *name) {
 	dev = first_net_device(&init_net);
 	while (dev) {
 		if((0 == strcmp(dev->name, name)) && is_nat46(dev)) {
-    			printk(KERN_INFO "found [%s]\n", dev->name);
+    			if(debug) { 
+				printk(KERN_INFO "found [%s]\n", dev->name);
+			}
 			out = dev;
 			break;
 		}

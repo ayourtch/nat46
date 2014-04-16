@@ -36,7 +36,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>");
 MODULE_DESCRIPTION("NAT46 stateless translation");
 
-int                     debug = 1;
+int                     debug = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "debugging messages level (default=1)");
 
