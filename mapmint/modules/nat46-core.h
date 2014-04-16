@@ -52,6 +52,8 @@ typedef struct {
   nat46_xlate_rule_t local_rule;
   nat46_xlate_rule_t remote_rule;
 
+  void *nat46_dev;
+
   reasm_item_t frags[NAT46_MAX_V6_FRAGS];
   int nfrags;
 } nat46_instance_t;

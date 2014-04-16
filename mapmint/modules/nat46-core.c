@@ -786,7 +786,7 @@ int xlate_map_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint1
   return ret;
 }
 
-int xlate_map_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id) {
+int xlate_map_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id, int version) {
   int ret = 0;
 
   uint8_t psid_bits_len;
@@ -895,7 +895,6 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
   uint16_t proto, sport = 0, dport = 0;
 
-  struct ipv6hdr * hdr = ipv6_hdr(old_skb);
   struct iphdr * iph;
   __u32 v4saddr, v4daddr;
   struct sk_buff * new_skb = 0;
@@ -918,7 +917,6 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
     if (!old_skb) {
       goto done;
     }
-    hdr = ipv6_hdr(old_skb);
     ip6h = ipv6_hdr(old_skb);
     proto = ip6h->nexthdr;
   }
@@ -945,20 +943,29 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   }
 
 
-  if(!xlate_v6_to_v4(&nat46->remote_rule, &hdr->saddr, &v4saddr, sport)) {
+  if(!xlate_v6_to_v4(&nat46->remote_rule, &ip6h->saddr, &v4saddr, sport)) {
     nat46debug(0, "[nat46] Could not translate remote address v6->v4");
     goto done;
   }
-  if(!xlate_v6_to_v4(&nat46->local_rule, &hdr->daddr, &v4daddr, dport)) {
+  if(!xlate_v6_to_v4(&nat46->local_rule, &ip6h->daddr, &v4daddr, dport)) {
     nat46debug(0, "[nat46] Could not translate local address v6->v4");
     goto done;
   }
     
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC); // other possible option: GFP_ATOMIC
+  
 
   /* Remove any debris in the socket control block */
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
+  nat46debug(5, "v4 newskb: peeked: %d nfctinfo: %02x ipvs_property: %02x nfct: %llx", new_skb->peeked, new_skb->nfctinfo, new_skb->ipvs_property, new_skb->nfct);
+/*
+  new_skb->nf_trace = 1;
+  new_skb->peeked = 0;
+  new_skb->nfctinfo = 0;
+  new_skb->ipvs_property = 0;
+  new_skb->nfct = NULL;
+*/
 
   /* modify packet: actual IPv6->IPv4 transformation */
   truncSize = sizeof(struct ipv6hdr) - sizeof(struct iphdr); /* chop first 20 bytes */
@@ -968,15 +975,19 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
 
   /* build IPv4 header */
   iph = ip_hdr(new_skb);
-  iph->ttl = hdr->hop_limit;
+  iph->ttl = ip6h->hop_limit;
   iph->saddr = v4saddr;
   iph->daddr = v4daddr;
-  iph->protocol = hdr->nexthdr;
+  iph->protocol = ip6h->nexthdr;
   *((__be16 *)iph) = htons((4 << 12) | (5 << 8) | (0x00/*tos*/ & 0xff));
   iph->frag_off = htons(IP_DF);
 
   /* iph->tot_len = htons(new_skb->len); // almost good, but it may cause troubles with sizeof(IPv6 pkt)<64 (padding issue) */
-  iph->tot_len = htons( ntohs(hdr->payload_len)+ 20 /*sizeof(ipv4hdr)*/ );
+  iph->tot_len = htons( ntohs(ip6h->payload_len)+ 20 /*sizeof(ipv4hdr)*/ );
+  if (ntohs(iph->tot_len) > 2000) {
+    nat46debug(0, "Too big len: %d", ntohs(iph->tot_len));
+    nat46debug(0, "IPv6 payload len was: %d", ntohs(ip6h->payload_len));
+  }
   assert(ntohs(iph->tot_len) < 2000);
   iph->check = 0;
   iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
@@ -990,8 +1001,8 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   if (err==0) {
     /* FIXME err = ip_forward(new_skb); */
   }
-  new_skb->dev = old_skb->dev;
-
+  new_skb->dev = nat46->nat46_dev;
+  nat46debug(5, "about to send v4 packet, flags: %02x",  IPCB(new_skb)->flags);
   netif_rx(new_skb);
 
   /* TBD: should copy be released here? */
@@ -1078,6 +1089,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
     goto done;
   }
   nat46debug(1, "nat46_ipv4_input packet");
+  nat46debug(5, "v4 packet flags: %02x",  IPCB(old_skb)->flags);
 
   if (ntohs(hdr4->tot_len) > 1480) {
     // FIXME: need to send Packet Too Big here.
@@ -1151,7 +1163,8 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   // FIXME: check if you can not fit the packet into the cached MTU
   // if (dst_mtu(skb_dst(new_skb))==0) { }
 
-  new_skb->dev = old_skb->dev;
+  new_skb->dev = nat46->nat46_dev;
+
   netif_rx(new_skb);
 
 
