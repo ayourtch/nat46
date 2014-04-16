@@ -30,6 +30,7 @@ typedef struct {
 typedef enum {
   NAT46_XLATE_NONE = 0,
   NAT46_XLATE_MAP,
+  NAT46_XLATE_MAP0,
   NAT46_XLATE_RFC6052
 } nat46_xlate_style_t;
      

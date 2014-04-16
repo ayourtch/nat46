@@ -152,6 +152,8 @@ int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
     val = get_next_arg(ptail);
     if (0 == strcmp("MAP", val)) {
       rule->style = NAT46_XLATE_MAP;
+    } else if (0 == strcmp("MAP0", val)) {
+      rule->style = NAT46_XLATE_MAP0;
     } else if (0 == strcmp("RFC6052", val)) {
       rule->style = NAT46_XLATE_RFC6052;
     } else if (0 == strcmp("NONE", val)) {
@@ -194,6 +196,8 @@ char *xlate_style_to_string(nat46_xlate_style_t style) {
       return "NONE";
     case NAT46_XLATE_MAP:
       return "MAP";
+    case NAT46_XLATE_MAP0:
+      return "MAP0";
     case NAT46_XLATE_RFC6052:
       return "RFC6052";
   }
@@ -686,7 +690,7 @@ bitarray_copy(const void *src_org, int src_offset, int src_len,
     }
 }
 
-int xlate_map_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id) {
+int xlate_map_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id, int map_version) {
   int ret = 0;
   u32 *pv4u32 = pipv4;
   uint8_t *p6 = pipv6;
@@ -744,7 +748,7 @@ int xlate_map_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint1
    *   prefix.
    *  
    */
-  if (1) {
+  if (map_version) {
     p6[8] = p6[9] = 0;
     p6[10] = 0xff & (ntohl(*pv4u32) >> 24);
     p6[11] = 0xff & (ntohl(*pv4u32) >> 16);
@@ -826,8 +830,11 @@ int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t 
          ret = 1;
       }
       break;
+    case NAT46_XLATE_MAP0: 
+      ret = xlate_map_v4_to_v6(rule, pipv4, pipv6, l4id, 0);
+      break;
     case NAT46_XLATE_MAP: 
-      ret = xlate_map_v4_to_v6(rule, pipv4, pipv6, l4id);
+      ret = xlate_map_v4_to_v6(rule, pipv4, pipv6, l4id, 1);
       break;
     case NAT46_XLATE_RFC6052:
       xlate_v4_to_nat64(rule, pipv4, pipv6);
@@ -848,8 +855,11 @@ int xlate_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t 
          ret = 1;
       }
       break;
+    case NAT46_XLATE_MAP0: 
+      ret = xlate_map_v6_to_v4(rule, pipv6, pipv4, l4id, 0);
+      break;
     case NAT46_XLATE_MAP: 
-      ret = xlate_map_v6_to_v4(rule, pipv6, pipv4, l4id);
+      ret = xlate_map_v6_to_v4(rule, pipv6, pipv4, l4id, 1);
       break;
     case NAT46_XLATE_RFC6052:
       ret = xlate_nat64_to_v4(rule, pipv6, pipv4);
