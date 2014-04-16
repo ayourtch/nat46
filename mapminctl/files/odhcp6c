@@ -18,23 +18,16 @@ case "$2" in
         bound)
                 log STARTING "$1" 
                 date >>/tmp/map.log
-                cmd "insmod mapmint"                                                 
-                ifconfig mapmint up promisc
-                # sleep 2
-                # /etc/init.d/firewall stop
-                # iptables -t nat -F
+                cmd "insmod nat46"
+                # comment out the next line if you are using asr9000 
+                export MAP_VERSION=0
                 mdpc -w $1 -m 1100 | sed -e 's/ivictl/mapminctl/g' >>/tmp/map.log 2>>/tmp/map.log
                 mdpc -w $1 -m 1100 | sed -e 's/ivictl/mapminctl/g' |  sed -e 's/-A POSTROUTING/-I zone_wan_postrouting/g' | sh | sh
-                ip -4 route add default dev mapmint
-                ip -6 route add 2001:db8:beef:1f00:c0:a8ff:6400:f00/128 dev mapmint
-                ip -6 route add 2001:db8:feed::/64 via fe80::20c:29ff:fee3:4e11 dev eth1
                 
         ;;
         unbound)
                 log STOPPING "$1" 
                 date >>/tmp/map.log
-                # cmd "rmmod mapmint"
-                # cmd "iptables -t nat -F"
         ;;
 esac
 
