@@ -22,7 +22,7 @@ include $(INCLUDE_DIR)/package.mk
 
 define Package/mapminctl
   SECTION:=net
-  DEPENDS:=+odhcp6c +map-mdpc +kmod-mapmint
+  DEPENDS:=+odhcp6c +map-mdpc +kmod-mapmint +iptables-mod-conntrack-extra
   CATEGORY:=Network
   TITLE:=MAPMIN control utility
   MAINTAINER:=Andrew Yourtchenko <ayourtch@gmail.com>
