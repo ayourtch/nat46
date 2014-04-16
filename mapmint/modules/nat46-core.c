@@ -139,16 +139,12 @@ int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
   char *val;
   if (0 == strcmp(arg_name, "v6")) {
     err = try_parse_ipv6_prefix(&rule->v6_pref, &rule->v6_pref_len, get_next_arg(ptail)); 
-    nat46debug(13, "Set v6 prefix");
   } else if (0 == strcmp(arg_name, "v4")) {
-    nat46debug(13, "Set v4 prefix");
     err = try_parse_ipv4_prefix(&rule->v4_pref, &rule->v4_pref_len, get_next_arg(ptail));
   } else if (0 == strcmp(arg_name, "ea-len")) {
-    nat46debug(13, "Set ea-len");
     val = get_next_arg(ptail);
     rule->ea_len = simple_strtol(val, NULL, 10);
   } else if (0 == strcmp(arg_name, "style")) {
-    nat46debug(13, "Set v4 style");
     val = get_next_arg(ptail);
     if (0 == strcmp("MAP", val)) {
       rule->style = NAT46_XLATE_MAP;
@@ -274,7 +270,6 @@ void ipv4_update_csum(struct sk_buff * skb, struct iphdr *iph) {
       sum1 = csum_partial((char*)icmph, icmplen, 0);
       sum2 = csum_fold(sum1);
       icmph->checksum = sum2;
-      nat46debug(5, "ICMP checksum %04x", icmph->checksum);
       break;
       }
     default:
@@ -465,7 +460,7 @@ From RFC6052, section 2.2:
 
 ********************************************************************/
 
-void xlate_v4_to_nat64(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6) {
+void xlate_v4_to_nat64(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6) {
   char *ipv4 = pipv4;
   char *ipv6 = pipv6;
 
@@ -506,7 +501,7 @@ void xlate_v4_to_nat64(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6) {
   }
 }
 
-int xlate_nat64_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
+int xlate_nat64_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
   char *ipv4 = pipv4;
   char *ipv6 = pipv6;
   int cmp = -1;
@@ -690,7 +685,7 @@ bitarray_copy(const void *src_org, int src_offset, int src_len,
     }
 }
 
-int xlate_map_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id, int map_version) {
+int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id, int map_version) {
   int ret = 0;
   u32 *pv4u32 = pipv4;
   uint8_t *p6 = pipv6;
@@ -786,7 +781,7 @@ int xlate_map_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint1
   return ret;
 }
 
-int xlate_map_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id, int version) {
+int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id, int version) {
   int ret = 0;
 
   uint8_t psid_bits_len;
@@ -820,7 +815,7 @@ int xlate_map_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint1
   return ret;
 }
 
-int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id) {
+int xlate_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id) {
   int ret = 0;
   switch(rule->style) {
     case NAT46_XLATE_NONE: /* always fail unless it is a host 1:1 translation */
@@ -831,13 +826,13 @@ int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t 
       }
       break;
     case NAT46_XLATE_MAP0: 
-      ret = xlate_map_v4_to_v6(rule, pipv4, pipv6, l4id, 0);
+      ret = xlate_map_v4_to_v6(nat46, rule, pipv4, pipv6, l4id, 0);
       break;
     case NAT46_XLATE_MAP: 
-      ret = xlate_map_v4_to_v6(rule, pipv4, pipv6, l4id, 1);
+      ret = xlate_map_v4_to_v6(nat46, rule, pipv4, pipv6, l4id, 1);
       break;
     case NAT46_XLATE_RFC6052:
-      xlate_v4_to_nat64(rule, pipv4, pipv6);
+      xlate_v4_to_nat64(nat46, rule, pipv4, pipv6);
       /* NAT46 rules using RFC6052 always succeed since they can map any IPv4 address */
       ret = 1;
       break;
@@ -845,7 +840,7 @@ int xlate_v4_to_v6(nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t 
   return ret;
 }
 
-int xlate_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id) {
+int xlate_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id) {
   int ret = 0;
   switch(rule->style) {
     case NAT46_XLATE_NONE: /* always fail unless it is a host 1:1 translation */
@@ -856,13 +851,13 @@ int xlate_v6_to_v4(nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t 
       }
       break;
     case NAT46_XLATE_MAP0: 
-      ret = xlate_map_v6_to_v4(rule, pipv6, pipv4, l4id, 0);
+      ret = xlate_map_v6_to_v4(nat46, rule, pipv6, pipv4, l4id, 0);
       break;
     case NAT46_XLATE_MAP: 
-      ret = xlate_map_v6_to_v4(rule, pipv6, pipv4, l4id, 1);
+      ret = xlate_map_v6_to_v4(nat46, rule, pipv6, pipv4, l4id, 1);
       break;
     case NAT46_XLATE_RFC6052:
-      ret = xlate_nat64_to_v4(rule, pipv6, pipv4);
+      ret = xlate_nat64_to_v4(nat46, rule, pipv6, pipv4);
       break;
   }
   return ret;
@@ -942,11 +937,11 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   }
 
 
-  if(!xlate_v6_to_v4(&nat46->remote_rule, &ip6h->saddr, &v4saddr, sport)) {
+  if(!xlate_v6_to_v4(nat46, &nat46->remote_rule, &ip6h->saddr, &v4saddr, sport)) {
     nat46debug(0, "[nat46] Could not translate remote address v6->v4");
     goto done;
   }
-  if(!xlate_v6_to_v4(&nat46->local_rule, &ip6h->daddr, &v4daddr, dport)) {
+  if(!xlate_v6_to_v4(nat46, &nat46->local_rule, &ip6h->daddr, &v4daddr, dport)) {
     nat46debug(0, "[nat46] Could not translate local address v6->v4");
     goto done;
   }
@@ -1105,11 +1100,11 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
       goto done;
   }
 
-  if(!xlate_v4_to_v6(&nat46->remote_rule, &hdr4->daddr, v6daddr, dport)) {
+  if(!xlate_v4_to_v6(nat46, &nat46->remote_rule, &hdr4->daddr, v6daddr, dport)) {
     nat46debug(0, "[nat46] Could not translate remote address v4->v6");
     goto done;
   }
-  if(!xlate_v4_to_v6(&nat46->local_rule, &hdr4->saddr, v6saddr, sport)) {
+  if(!xlate_v4_to_v6(nat46, &nat46->local_rule, &hdr4->saddr, v6saddr, sport)) {
     nat46debug(0, "[nat46] Could not translate local address v4->v6");
     goto done;
   }
