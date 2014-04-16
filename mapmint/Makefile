@@ -18,7 +18,7 @@ define KernelPackage/mapmint
   TITLE:=MAPMIN MAP-T stateless 46 translation kernel module
   SECTION:=kernel
   SUBMENU:=Network Support
-  FILES:=$(PKG_BUILD_DIR)/modules/mapmint.ko 
+  FILES:=$(PKG_BUILD_DIR)/modules/nat46.ko 
 endef
 
 

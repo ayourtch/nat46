@@ -30,6 +30,7 @@ mapminctl -r -d -P 2001:470:73cd:cafe::/64 -T
 #define RULE_PREFERENCE 32765
 #define ROUTE_TABLE 77
 #define NET_DEVICE_T "mapmint"
+#define PROC_CTL_FILE "net/nat46/control"
 
 
 void usage(int status) {
@@ -328,10 +329,13 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 	if (action == ACTION_RULE) {
 		if(arg_default && arg_translate) {
 			char v6addr[INET6_ADDRSTRLEN];
-
-			printf("echo dmr %s/%d >/proc/%s\n", 
+			printf("echo add %s >/proc/%s\n", NET_DEVICE_T, PROC_CTL_FILE);
+			printf("echo config %s remote.style RFC6052 >/proc/%s\n", 
+				NET_DEVICE_T, PROC_CTL_FILE);
+			printf("echo config %s remote.v6 %s/%d >/proc/%s\n", 
+				NET_DEVICE_T,
 				inet_ntop(AF_INET6, arg_prefix6_val, v6addr, sizeof(v6addr)),
-				arg_prefix6_len, NET_DEVICE_T);
+				arg_prefix6_len, PROC_CTL_FILE);
 			printf("ip -4 route add default dev %s\n", NET_DEVICE_T);
 			printf("ip -6 rule add pref %d from all to %s/%d iif %s lookup %d\n",
 				RULE_PREFERENCE, v6addr, arg_prefix6_len, NET_DEVICE_T, ROUTE_TABLE);
@@ -358,9 +362,13 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 				pc[arg_prefix6_len/8] |= 0xff & ((arg_psid << (8-psidbits)) >> (arg_prefix6_len%8));
 				pc[arg_prefix6_len/8 + 1] |= (0xff & (arg_psid << (psidbits + 8 - (arg_prefix6_len % 8)))); 
 
-				printf("echo bmr %s/%d >/proc/mapmint\n", 
+				printf("echo config %s local.style MAP >/proc/%s\n", 
+					NET_DEVICE_T, PROC_CTL_FILE);
+				printf("echo config %s local.v6 %s/%d >/proc/%s\n", 
+					NET_DEVICE_T, 
 					inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)),
-					64);
+					64, 
+					PROC_CTL_FILE);
 
 				if(arg_psid_seen && arg_publicaddr_seen) {
 					pc[9] = (arg_publicaddr_val >> 24) & 0xff;
@@ -371,16 +379,17 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 					pc[13] = (arg_psid >> 8) & 0xff;
 					pc[14] = arg_psid & 0xff;
 
-					printf("ip -6 route add %s/128 dev mapmint\n", 
-						inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)));
+					printf("ip -6 route add %s/128 dev %s\n", 
+						inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)), NET_DEVICE_T);
+
 				}
 			}
 			if (arg_psid_seen) {
-				printf("echo psid %d >/proc/mapmint\n", arg_psid);
+				printf("echo FIXME psid %d >/proc/%s\n", arg_psid, PROC_CTL_FILE);
 			}
 			if (arg_publicaddr_seen) {
-				printf("echo v4 %s >/proc/mapmint\n", 
-					inet_ntoa(*(struct in_addr *)&arg_publicaddr_val));
+				printf("echo config %s local.v4 %s/%d >/proc/%s\n", NET_DEVICE_T,
+					inet_ntoa(*(struct in_addr *)&arg_publicaddr_val), arg_publicaddr_len, PROC_CTL_FILE);
 			}
 		}
 		fprintf(stderr, "psid bits: %d\n", psidbits);
