@@ -136,19 +136,18 @@ int try_parse_ipv4_prefix(u32 *v4addr, int *pref_len, char *arg) {
 
 int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
   int err = 0;
-  char *val;
-  if (0 == strcmp(arg_name, "v6")) {
-    err = try_parse_ipv6_prefix(&rule->v6_pref, &rule->v6_pref_len, get_next_arg(ptail)); 
+  char *val = get_next_arg(ptail);
+  if (NULL == val) {
+    err = -1;
+  } else if (0 == strcmp(arg_name, "v6")) {
+    err = try_parse_ipv6_prefix(&rule->v6_pref, &rule->v6_pref_len, val); 
   } else if (0 == strcmp(arg_name, "v4")) {
-    err = try_parse_ipv4_prefix(&rule->v4_pref, &rule->v4_pref_len, get_next_arg(ptail));
+    err = try_parse_ipv4_prefix(&rule->v4_pref, &rule->v4_pref_len, val);
   } else if (0 == strcmp(arg_name, "ea-len")) {
-    val = get_next_arg(ptail);
     rule->ea_len = simple_strtol(val, NULL, 10);
   } else if (0 == strcmp(arg_name, "psid-offset")) {
-    val = get_next_arg(ptail);
     rule->psid_offset = simple_strtol(val, NULL, 10);
   } else if (0 == strcmp(arg_name, "style")) {
-    val = get_next_arg(ptail);
     if (0 == strcmp("MAP", val)) {
       rule->style = NAT46_XLATE_MAP;
     } else if (0 == strcmp("MAP0", val)) {
@@ -173,9 +172,13 @@ int nat46_set_config(nat46_instance_t *nat46, char *buf, int count) {
   char *tail = buf;
   char *arg_name;
   int err = 0;
+  char *val;
   while ((0 == err) && (NULL != (arg_name = get_next_arg(&tail)))) {
     if (0 == strcmp(arg_name, "debug")) {
-      nat46->debug = simple_strtol(get_next_arg(&tail), NULL, 10);
+      val = get_next_arg(&tail);
+      if (val) {
+        nat46->debug = simple_strtol(val, NULL, 10);
+      }
     } else if (arg_name == strstr(arg_name, "local.")) {
       arg_name += strlen("local.");
       nat46debug(13, "Setting local xlate parameter");
