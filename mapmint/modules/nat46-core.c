@@ -947,6 +947,10 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
     case NEXTHDR_ICMP:
       sport = dport = nat46_fixup_icmp6(nat46, ip6h, old_skb);
       break;
+    case NEXTHDR_FRAGMENT:
+      nat46debug(2, "[ipv6] Next header is fragment. Not doing anything.");
+      goto done;
+      break;
     default:
       nat46debug(0, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP6 are supported.", proto);
       goto done;
