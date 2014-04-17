@@ -101,6 +101,9 @@ as well as the kernel module and the required iptables packages.
 If you are using the latest version of the openwrt-map feed, then mdpc included 
 there will start using MAPMIN automatically, and announce that in /tmp/map.log
 
+Configuration
+=============
+
 Of course, the DHCPv6 client and the device has to be configured accordingly.
 
 Here is a preliminary example of the configuration with the mapmin pieces included:
