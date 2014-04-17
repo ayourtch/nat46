@@ -4,9 +4,8 @@ mapmin
 A very minimal, self-contained, and not necessarily standards-conformant 
 implementation of MAP and its provisioning for experimental use.
 
-For now it is probably not very useful for anyone besides me, 
-as it is nothing that really works. Anyway, enough of how it does not work,
-let's talk about what it should be.
+For now it is used to implement and provision MAP-T as I develop 
+the kernel NAT46 driver for it. I did not spend efforts on making the MAP-E work yet.
 
 The Idea
 ========
