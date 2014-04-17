@@ -102,3 +102,45 @@ as well as the kernel module and the required iptables packages.
 If you are using the latest version of the openwrt-map feed, then mdpc included 
 there will start using MAPMIN automatically, and announce that in /tmp/map.log
 
+Of course, the DHCPv6 client and the device has to be configured accordingly.
+
+Here is a preliminary example of the configuration with the mapmin pieces included:
+
+/etc/config/network:
+```
+config interface 'wan'
+        option ifname 'eth0.2'
+        option _orig_ifname 'eth0.2'
+        option _orig_bridge 'false'
+        option proto 'pppoe'
+        option username 'user'
+        option password 'user_pass'
+        option ipv6 '1'
+        option keepalive '2 30'
+
+config interface 'wan6'
+        option ifname '@wan'
+        option proto 'dhcpv6'
+        option reqopts '48879'   # Add this to request the test MAP DHCPv6 option
+        
+config interface 'mapmint'       # Add this interface to place it into firewall
+        option ifname 'mapmint'
+        option proto 'none'
+```
+
+/etc/config/firewall:
+
+```
+config zone
+        option name             wan
+        list   network          'wan'
+        list   network          'wan6'
+        list   network          'mapmint' # Add this interface to the WAN zone
+        option input            REJECT
+        option output           ACCEPT
+        option forward          ACCEPT    # Allow forwarding
+        option masq             1
+        option mtu_fix          1
+
+```
+
