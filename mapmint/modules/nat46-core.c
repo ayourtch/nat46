@@ -413,7 +413,9 @@ struct sk_buff *try_reassembly(nat46_instance_t *nat46, struct sk_buff *old_skb)
           }
         }
         if (first_frag == nat46->frags[i].skb) {
-          pskb_expand_head(old_skb, 0, first_frag->len - old_skb->len, GFP_ATOMIC);
+          int old_len = old_skb->len;
+          nat46_reasm_debug(1, "Need to copy the data from the first fragment into the current and increase the len: (%d -> %d+%d)", old_len, old_len, first_frag->len);
+          skb_put(old_skb, first_frag->len - old_len);
           memcpy(old_skb->data, first_frag->data, first_frag->len);
         }
         kfree_skb(nat46->frags[i].skb); 
