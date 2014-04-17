@@ -74,6 +74,9 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
         }
 	tail = buf;
         buf[count] = '\0';
+	if( (count > 0) && (buf[count-1] == '\n') ) {
+		buf[count-1] = '\0';
+	}
 
         while (NULL != (arg_name = get_next_arg(&tail))) {
 		if (0 == strcmp(arg_name, "add")) {

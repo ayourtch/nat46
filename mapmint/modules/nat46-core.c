@@ -144,6 +144,9 @@ int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
   } else if (0 == strcmp(arg_name, "ea-len")) {
     val = get_next_arg(ptail);
     rule->ea_len = simple_strtol(val, NULL, 10);
+  } else if (0 == strcmp(arg_name, "psid-offset")) {
+    val = get_next_arg(ptail);
+    rule->psid_offset = simple_strtol(val, NULL, 10);
   } else if (0 == strcmp(arg_name, "style")) {
     val = get_next_arg(ptail);
     if (0 == strcmp("MAP", val)) {
@@ -287,10 +290,12 @@ static uint16_t nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h,
       case ICMPV6_ECHO_REQUEST:
         icmp6h->icmp6_type = ICMP_ECHO;
         ret = icmp6h->icmp6_identifier;
+        nat46debug(3, "ICMPv6 echo request translated into IPv4, id: %d", ntohs(ret)); 
         break;
       case ICMPV6_ECHO_REPLY:
         icmp6h->icmp6_type = ICMP_ECHOREPLY;
         ret = icmp6h->icmp6_identifier;
+        nat46debug(3, "ICMPv6 echo reply translated into IPv4, id: %d", ntohs(ret)); 
         break;
     }
   } else {
@@ -710,7 +715,8 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   memset(pipv6, 0, 16);
 
   psid_bits_len = rule->ea_len - (32 - rule->v4_pref_len);
-  psid = ntohs(l4id) >> (16 - psid_bits_len - rule->psid_offset);
+  psid = (ntohs(l4id) >> (16 - psid_bits_len - rule->psid_offset)) & (0xffff >> (16 - psid_bits_len));
+  nat46debug(10, "xlate_map_v4_to_v6: ntohs(l4id): %04x psid_bits_len: %d, rule psid-offset: %d, psid: %d\n", ntohs(l4id), psid_bits_len, rule->psid_offset, psid);
 
   /* 
    *     create the IID. pay the attention there can be two formats:
@@ -871,12 +877,12 @@ static uint16_t nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, str
     case ICMP_ECHO:
       icmph->type = ICMPV6_ECHO_REQUEST;
       ret = icmph->un.echo.id;
-      nat46debug(3, "ICMP echo request translated into IPv6"); 
+      nat46debug(3, "ICMP echo request translated into IPv6, id: %d", ntohs(ret)); 
       break;
     case ICMP_ECHOREPLY:
       icmph->type = ICMPV6_ECHO_REPLY;
       ret = icmph->un.echo.id;
-      nat46debug(3, "ICMP echo reply translated into IPv6"); 
+      nat46debug(3, "ICMP echo reply translated into IPv6, id: %d", ntohs(ret)); 
       break;
   }
   iph->protocol = NEXTHDR_ICMP;

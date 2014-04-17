@@ -360,9 +360,6 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 				char *map_rev = "";
 
 				memcpy(arg_prefix6_val_bmr, arg_prefix6_val, sizeof(arg_prefix6_val_bmr));
-		
-				pc[arg_prefix6_len/8] |= 0xff & ((arg_psid << (8-psidbits)) >> (arg_prefix6_len%8));
-				pc[arg_prefix6_len/8 + 1] |= (0xff & (arg_psid << (psidbits + 8 - (arg_prefix6_len % 8)))); 
 
 				printf("echo add %s >/proc/%s\n", NET_DEVICE_T, PROC_CTL_FILE);
 				printf("ifconfig %s up\n", NET_DEVICE_T);
@@ -372,11 +369,22 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 
 				printf("echo config %s local.style MAP%s >/proc/%s\n", 
 					NET_DEVICE_T, map_rev, PROC_CTL_FILE);
+				
+#ifdef NO_PSID
+				pc[arg_prefix6_len/8] |= 0xff & ((arg_psid << (8-psidbits)) >> (arg_prefix6_len%8));
+				pc[arg_prefix6_len/8 + 1] |= (0xff & (arg_psid << (psidbits + 8 - (arg_prefix6_len % 8)))); 
 				printf("echo config %s local.v6 %s/%d >/proc/%s\n", 
 					NET_DEVICE_T, 
 					inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)),
 					64, 
 					PROC_CTL_FILE);
+#else
+				printf("echo config %s local.v6 %s/%d >/proc/%s\n", 
+					NET_DEVICE_T, 
+					inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)),
+					arg_prefix6_len, 
+					PROC_CTL_FILE);
+#endif
 
 				if(arg_psid_seen && arg_publicaddr_seen) {
 					printf("echo config %s local.ea-len %d >/proc/%s\n", 
@@ -404,6 +412,8 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 						pc[15] = arg_psid & 0xff;
 					}
 
+					pc[arg_prefix6_len/8] |= 0xff & ((arg_psid << (8-psidbits)) >> (arg_prefix6_len%8));
+					pc[arg_prefix6_len/8 + 1] |= (0xff & (arg_psid << (psidbits + 8 - (arg_prefix6_len % 8)))); 
 					printf("ip -6 route add %s/128 dev %s\n", 
 						inet_ntop(AF_INET6, arg_prefix6_val_bmr, v6addr, sizeof(v6addr)), NET_DEVICE_T);
 
