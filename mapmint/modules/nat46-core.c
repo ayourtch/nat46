@@ -53,7 +53,7 @@ nat46debug_dump(nat46_instance_t *nat46, int level, void *addr, int len)
     if(i % 16 == 0) {
       *pc1 = 0;
       *pc2 = 0;
-      nat46_reasm_debug(level, "%s:   %s  %s", buf0, buf1, buf2);
+      nat46debug(level, "%s:   %s  %s", buf0, buf1, buf2);
     }
 
   }
@@ -67,7 +67,7 @@ nat46debug_dump(nat46_instance_t *nat46, int level, void *addr, int len)
     }
     *pc1 = 0;
     *pc2 = 0;
-    nat46_reasm_debug(level, "%s:   %s  %s", buf0, buf1, buf2);
+    nat46debug(level, "%s:   %s  %s", buf0, buf1, buf2);
   }
 }
 
@@ -226,231 +226,6 @@ int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
 }
 
 
-void ipv4_update_csum(struct sk_buff * skb, struct iphdr *iph) {
-  __wsum sum1=0;
-  __sum16 sum2=0;
-  __sum16 oldsum=0;
-
-  int iphdrlen = ip_hdrlen(skb);
-
-  switch (iph->protocol) {
-    case IPPROTO_TCP: {
-      /* ripped from tcp_v4_send_check fro tcp_ipv4.c */
-      struct tcphdr *th = tcp_hdr(skb);
-      unsigned tcplen = 0;
-
-      /* printk(KERN_ALERT "iph=%p th=%p copy->len=%d, th->check=%x iphdrlen=%d thlen=%d\n",
-         iph, th, skb->len, ntohs(th->check), iphdrlen, thlen); */
-
-      skb->csum = 0;
-      skb->ip_summed = CHECKSUM_COMPLETE;
-
-      // calculate payload
-      oldsum = th->check;
-      th->check = 0;
-      tcplen = ntohs(iph->tot_len) - iphdrlen; /* skb->len - iphdrlen; (may cause trouble due to padding) */
-      sum1 = csum_partial((char*)th, tcplen, 0); /* calculate checksum for TCP hdr+payload */
-      sum2 = csum_tcpudp_magic(iph->saddr, iph->daddr, tcplen, iph->protocol, sum1); /* add pseudoheader */
-      th->check = sum2;
-      break;
-      }
-    case IPPROTO_UDP: {
-      struct udphdr *udp = udp_hdr(skb);
-      unsigned udplen = 0;
-
-      oldsum = udp->check;
-      udp->check = 0;
-      udplen = ntohs(iph->tot_len) - iphdrlen;
-
-      sum1 = csum_partial((char*)udp, udplen, 0);
-      sum2 = csum_tcpudp_magic(iph->saddr, iph->daddr, udplen, iph->protocol, sum1);
-      udp->check = sum2;
-
-      break;
-      }
-    case IPPROTO_ICMP: {
-      struct icmphdr *icmph = (struct icmphdr *)(iph+1);
-      unsigned icmplen = 0;
-      icmplen = ntohs(iph->tot_len) - iphdrlen;
-      icmph->checksum = 0;
-      sum1 = csum_partial((char*)icmph, icmplen, 0);
-      sum2 = csum_fold(sum1);
-      icmph->checksum = sum2;
-      break;
-      }
-    default:
-      break;
-  }
-}
-
-
-static uint16_t nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
-  struct icmp6hdr *icmp6h = (struct icmp6hdr *)(ip6h + 1);
-  uint16_t ret = 0;
-  if(icmp6h->icmp6_type & 128) {
-    /* Informational ICMP */
-    switch(icmp6h->icmp6_type) {
-      case ICMPV6_ECHO_REQUEST:
-        icmp6h->icmp6_type = ICMP_ECHO;
-        ret = icmp6h->icmp6_identifier;
-        nat46debug(3, "ICMPv6 echo request translated into IPv4, id: %d", ntohs(ret)); 
-        break;
-      case ICMPV6_ECHO_REPLY:
-        icmp6h->icmp6_type = ICMP_ECHOREPLY;
-        ret = icmp6h->icmp6_identifier;
-        nat46debug(3, "ICMPv6 echo reply translated into IPv4, id: %d", ntohs(ret)); 
-        break;
-    }
-  } else {
-    /* ICMPv6 errors */
-  }
-  ip6h->nexthdr = IPPROTO_ICMP;
-  return ret;
-}
-
-
-int ip6_input_not_interested(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
-  if (old_skb->protocol != htons(ETH_P_IPV6)) {
-    nat46debug(3, "Not an IPv6 packet");
-    return 1;
-  }
-  if(old_skb->len < sizeof(struct ipv6hdr) || ip6h->version != 6) {
-    nat46debug(3, "Len short or not correct version: %d", ip6h->version);
-    return 1;
-  }
-  if (!(ipv6_addr_type(&ip6h->saddr) & IPV6_ADDR_UNICAST)) {
-    nat46debug(3, "Source address not unicast");
-    return 1;
-  }
-  // FIXME: add the verification that the source is within the DMR
-  // FIXME: add the verification that the destination matches our v6 "outside" address
-  return 0;
-}
-
-
-__u32 xxx_my_v4addr;
-
-struct sk_buff *try_reassembly(nat46_instance_t *nat46, struct sk_buff *old_skb) {
-  struct ipv6hdr * hdr = ipv6_hdr(old_skb);
-  struct frag_hdr *fh = (struct frag_hdr*)(hdr + 1);
-  struct sk_buff *new_frag = NULL;
-  struct sk_buff *ret_skb = NULL;
-  struct sk_buff *first_frag = NULL;
-  struct sk_buff *second_frag = NULL;
-  int i;
-  nat46_reasm_debug(1, "try_reassembly, frag_off value: %04x, nexthdr: %02x", fh->frag_off, fh->nexthdr);
-  if(fh->frag_off == 0) {
-    hdr->nexthdr = fh->nexthdr;
-    hdr->payload_len = htons(ntohs(hdr->payload_len) - sizeof(struct frag_hdr));
-    memmove(fh, (fh+1), old_skb->len - sizeof(struct frag_hdr));
-    old_skb->len -= sizeof(struct frag_hdr);
-    old_skb->end -= sizeof(struct frag_hdr);
-    old_skb->tail -= sizeof(struct frag_hdr);
-    nat46_reasm_debug(1, "reassembly successful, %ld bytes shorter!", sizeof(struct frag_hdr));
-    ret_skb = old_skb;
-  } else {
-    nat46_reasm_debug(1, "reassembly can not be done because fragment offset is nonzero: %04x", fh->frag_off); 
-    
-    for(i=0; 
-            i < nat46->nfrags && 
-            nat46->frags[i].identification != fh->identification && 
-            (0 != ipv6_addr_cmp(&hdr->saddr, &nat46->frags[i].saddr)) &&
-            (0 != ipv6_addr_cmp(&hdr->daddr, &nat46->frags[i].daddr));
-        i++);
-    if(i < nat46->nfrags) {
-      /* Found a matching fragment in the queue, try to coalesce. */
-        nat46_reasm_debug(1, "Found a matching frag id %08x queued at index %d", fh->identification, i);
-        nat46_reasm_debug(1, "Queue frag_off: %04x, len: %04x; Current frag_off: %04x, len: %04x", ntohs(nat46->frags[i].frag_off), ntohs(ipv6_hdr(nat46->frags[i].skb)->payload_len), ntohs(fh->frag_off), ntohs(hdr->payload_len));
-
-        if ( 
-               (ntohs(nat46->frags[i].frag_off) & IP6_MF) && (0 == (ntohs(nat46->frags[i].frag_off) & IP6_OFFSET)) &&
-               (0 == (ntohs(fh->frag_off) & IP6_MF)) && (ntohs(fh->frag_off) & IP6_OFFSET) ) {
-          first_frag = nat46->frags[i].skb;
-          second_frag = old_skb;
-          nat46_reasm_debug(1, "First fragment is in the queue, second fragment just arrived");
-        } else if (
-               (0 == (ntohs(nat46->frags[i].frag_off) & IP6_MF)) && (ntohs(nat46->frags[i].frag_off) & IP6_OFFSET) &&
-               (ntohs(fh->frag_off) & IP6_MF) && (0 == (ntohs(fh->frag_off) & IP6_OFFSET)) ) {
-          first_frag = old_skb;
-          second_frag = nat46->frags[i].skb;
-          nat46_reasm_debug(1, "Second fragment is in the queue, first fragment just arrived");
-        } else {
-          first_frag = NULL;
-          second_frag = nat46->frags[i].skb;
-          nat46_reasm_debug(1, "Not sure which fragment is where, will just delete the frag from queue");
-        }
-        if (first_frag) {
-          struct frag_hdr *fh1 = (struct frag_hdr*)(ipv6_hdr(first_frag) + 1);
-          struct frag_hdr *fh2 = (struct frag_hdr*)(ipv6_hdr(second_frag) + 1);
-
-          if (ntohs(ipv6_hdr(first_frag)->payload_len) - sizeof(struct frag_hdr) == (IP6_OFFSET & ntohs(fh2->frag_off))) {
-/*
-            nat46_reasm_debug(1, "oldskb delta from head: data: %d, tail: %d, end: %d", old_skb->data - old_skb->head, 
-                                 old_skb->tail - old_skb->head, old_skb->end - old_skb->head);
-*/
-            nat46_reasm_debug(1, "expanding by: %ld\n", ntohs(ipv6_hdr(second_frag)->payload_len) - 2*sizeof(struct frag_hdr));
-            pskb_expand_head(first_frag, 0, ntohs(ipv6_hdr(second_frag)->payload_len) - 2*sizeof(struct frag_hdr), GFP_ATOMIC);
-            fh1 = (struct frag_hdr*)(ipv6_hdr(first_frag) + 1);
-            hdr = ipv6_hdr(first_frag);
-            hdr->nexthdr = fh1->nexthdr;
-            nat46_reasm_debug(1, "Reassembled next header: %d", hdr->nexthdr);
-            memmove(fh1, (fh1+1), first_frag->len - sizeof(struct frag_hdr));
-            first_frag->len -= sizeof(struct frag_hdr);
-            first_frag->tail -= sizeof(struct frag_hdr);
-
-            memcpy(skb_tail_pointer(first_frag), (fh2+1), ntohs(ipv6_hdr(second_frag)->payload_len) - sizeof(struct frag_hdr));
-            first_frag->len += ntohs(ipv6_hdr(second_frag)->payload_len) - sizeof(struct frag_hdr);
-            first_frag->tail += ntohs(ipv6_hdr(second_frag)->payload_len) - sizeof(struct frag_hdr);
-
-            hdr->payload_len = htons(ntohs(hdr->payload_len) + ntohs(ipv6_hdr(second_frag)->payload_len) - 2*sizeof(struct frag_hdr));
-            nat46_reasm_debug(1, "reassembly successful from 2 frags, len: %d!", first_frag->len);
-            // nat46_reasm_debug(1, "pointers: head: %08x, data: %08x, tail: %08x, end: %08x", old_skb->head, old_skb->data, old_skb->tail, old_skb->end);
-            // nat46debug_dump(nat46, 1, old_skb->head, old_skb->len);
-            
-          } else {
-            nat46_reasm_debug(1, "Can not reassemble two fragments, drop both");
-            // nat46debug_dump(-1, first_frag->head, first_frag->len);
-          }
-        }
-        if (first_frag == nat46->frags[i].skb) {
-          int old_len = old_skb->len;
-          nat46_reasm_debug(1, "Need to copy the data from the first fragment into the current and increase the len: (%d -> %d+%d)", old_len, old_len, first_frag->len);
-          skb_put(old_skb, first_frag->len - old_len);
-          memcpy(old_skb->data, first_frag->data, first_frag->len);
-        }
-        kfree_skb(nat46->frags[i].skb); 
-        ret_skb = old_skb;
-           
-        if(nat46->nfrags > 1) {
-          memcpy(&nat46->frags[i], &nat46->frags[nat46->nfrags-1], sizeof(nat46->frags[i]));
-        }
-        if (nat46->nfrags > 0) { 
-          memset(&nat46->frags[nat46->nfrags-1], 0, sizeof(nat46->frags[nat46->nfrags-1]));
-          nat46->nfrags--;
-        }
-        nat46_reasm_debug(1, "Deleted fragment with index %d, new nfrags: %d", i, nat46->nfrags);
-     
-    } else {
-      if (nat46->nfrags < NAT46_MAX_V6_FRAGS) {
-        i = nat46->nfrags++;
-        new_frag = skb_copy(old_skb, GFP_ATOMIC);
-        memcpy(&nat46->frags[i].saddr, &hdr->saddr, 16);
-        memcpy(&nat46->frags[i].daddr, &hdr->daddr, 16);
-        nat46->frags[i].identification = fh->identification;
-        nat46->frags[i].frag_off = fh->frag_off;
-        nat46->frags[i].skb = new_frag;
-        nat46_reasm_debug(1, "Fragment id %08x queued at index %d", fh->identification, i);
-        ret_skb = old_skb;
-      } else {
-        assert("ran out of fragments!" == NULL);
-      }
-     
-       
-    }
-  }
-  return ret_skb;
-}
-
 /********************************************************************
 
 From RFC6052, section 2.2:
@@ -477,8 +252,8 @@ void xlate_v4_to_nat64(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   char *ipv4 = pipv4;
   char *ipv6 = pipv6;
 
-  /* 'u' byte and suffix are zero */ 
-  memset(&ipv6[8], 0, 8); 
+  /* 'u' byte and suffix are zero */
+  memset(&ipv6[8], 0, 8);
   switch(rule->v6_pref_len) {
     case 32:
       memcpy(ipv6, &rule->v6_pref, 4);
@@ -576,10 +351,10 @@ int xlate_nat64_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *p
 
 /*
 
-The below bitarray copy code is from 
+The below bitarray copy code is from
 
 http://stackoverflow.com/questions/3534535/whats-a-time-efficient-algorithm-to-copy-unaligned-bit-arrays
- 
+
 */
 
 #define CHAR_BIT 8
@@ -652,7 +427,7 @@ bitarray_copy(const void *src_org, int src_offset, int src_len,
             int             src_len_modulo;
             unsigned char   c;
             /*
-             * Begin: Line things up on destination. 
+             * Begin: Line things up on destination.
              */
             if (src_offset_modulo > dst_offset_modulo) {
                 bit_diff_ls = src_offset_modulo - dst_offset_modulo;
@@ -672,7 +447,7 @@ bitarray_copy(const void *src_org, int src_offset, int src_len,
             *dst++ |= c;
 
             /*
-             * Middle: copy with only shifting the source. 
+             * Middle: copy with only shifting the source.
              */
             byte_len = src_len / CHAR_BIT;
 
@@ -683,7 +458,7 @@ bitarray_copy(const void *src_org, int src_offset, int src_len,
             }
 
             /*
-             * End: copy the remaing bits; 
+             * End: copy the remaining bits;
              */
             src_len_modulo = src_len % CHAR_BIT;
             if (src_len_modulo) {
@@ -718,7 +493,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   if (rule->ea_len < (32 - rule->v4_pref_len) ) {
     nat46debug(0, "xlate_map_v4_to_v6: rule->ea_len < (32 - rule->v4_pref_len)");
     return 0;
-  } 
+  }
   /* zero out the IPv6 address */
   memset(pipv6, 0, 16);
 
@@ -726,7 +501,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   psid = (ntohs(l4id) >> (16 - psid_bits_len - rule->psid_offset)) & (0xffff >> (16 - psid_bits_len));
   nat46debug(10, "xlate_map_v4_to_v6: ntohs(l4id): %04x psid_bits_len: %d, rule psid-offset: %d, psid: %d\n", ntohs(l4id), psid_bits_len, rule->psid_offset, psid);
 
-  /* 
+  /*
    *     create the IID. pay the attention there can be two formats:
    *
    *     draft-ietf-softwire-map-t-00:
@@ -740,12 +515,12 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
    *
    *
    *     latest draft-ietf-softwire-map-t:
-   *  
+   *
    *   |        128-n-o-s bits            |
    *   | 16 bits|    32 bits     | 16 bits|
    *   +--------+----------------+--------+
    *   |   0    |  IPv4 address  |  PSID  |
-   *   +--------+----------------+--------+    
+   *   +--------+----------------+--------+
    *
    *   In the case of an IPv4 prefix, the IPv4 address field is right-padded
    *   with zeros up to 32 bits.  The PSID is zero left-padded to create a
@@ -755,7 +530,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
    *   If the End-user IPv6 prefix length is larger than 64, the most
    *   significant parts of the interface identifier is overwritten by the
    *   prefix.
-   *  
+   *
    */
   if (map_version) {
     p6[8] = p6[9] = 0;
@@ -776,7 +551,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
     p6[15] = 0;
     /* old EID */
   }
- 
+
   /* copy the necessary part of domain IPv6 prefix into place, w/o overwriting the existing data */
   bitarray_copy(&rule->v6_pref, 0, rule->v6_pref_len, p6, 0);
 
@@ -795,7 +570,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   return ret;
 }
 
-int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id, int version) {
+int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, int version) {
   int ret = 0;
 
   uint8_t psid_bits_len;
@@ -814,17 +589,17 @@ int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   if (rule->ea_len < (32 - rule->v4_pref_len) ) {
     nat46debug(0, "xlate_map_v6_to_v4: rule->ea_len < (32 - rule->v4_pref_len)");
     return 0;
-  } 
+  }
   psid_bits_len = rule->ea_len - (32 - rule->v4_pref_len);
 
   memcpy(pipv4, &rule->v4_pref, 4);
   if (v4_lsb_bits_len) {
     bitarray_copy(pipv6, rule->v6_pref_len, v4_lsb_bits_len, pipv4, rule->v4_pref_len);
   }
-  /* 
+  /*
    * FIXME: I do not verify the PSID here. The idea is that if the destination port is incorrect, this
-   * will be caught in the NAT44 module. 
-   */ 
+   * will be caught in the NAT44 module.
+   */
   ret = 1;
   return ret;
 }
@@ -833,16 +608,16 @@ int xlate_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv
   int ret = 0;
   switch(rule->style) {
     case NAT46_XLATE_NONE: /* always fail unless it is a host 1:1 translation */
-      if ( (rule->v6_pref_len == 128) && (rule->v4_pref_len == 32) && 
+      if ( (rule->v6_pref_len == 128) && (rule->v4_pref_len == 32) &&
            (0 == memcmp(pipv4, &rule->v4_pref, sizeof(rule->v4_pref))) ) {
          memcpy(pipv6, &rule->v6_pref, sizeof(rule->v6_pref));
          ret = 1;
       }
       break;
-    case NAT46_XLATE_MAP0: 
+    case NAT46_XLATE_MAP0:
       ret = xlate_map_v4_to_v6(nat46, rule, pipv4, pipv6, l4id, 0);
       break;
-    case NAT46_XLATE_MAP: 
+    case NAT46_XLATE_MAP:
       ret = xlate_map_v4_to_v6(nat46, rule, pipv4, pipv6, l4id, 1);
       break;
     case NAT46_XLATE_RFC6052:
@@ -854,21 +629,21 @@ int xlate_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv
   return ret;
 }
 
-int xlate_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, uint16_t l4id) {
+int xlate_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
   int ret = 0;
   switch(rule->style) {
     case NAT46_XLATE_NONE: /* always fail unless it is a host 1:1 translation */
-      if ( (rule->v6_pref_len == 128) && (rule->v4_pref_len == 32) && 
+      if ( (rule->v6_pref_len == 128) && (rule->v4_pref_len == 32) &&
            (0 == memcmp(pipv6, &rule->v6_pref, sizeof(rule->v6_pref))) ) {
          memcpy(pipv4, &rule->v4_pref, sizeof(rule->v4_pref));
          ret = 1;
       }
       break;
-    case NAT46_XLATE_MAP0: 
-      ret = xlate_map_v6_to_v4(nat46, rule, pipv6, pipv4, l4id, 0);
+    case NAT46_XLATE_MAP0:
+      ret = xlate_map_v6_to_v4(nat46, rule, pipv6, pipv4, 0);
       break;
-    case NAT46_XLATE_MAP: 
-      ret = xlate_map_v6_to_v4(nat46, rule, pipv6, pipv4, l4id, 1);
+    case NAT46_XLATE_MAP:
+      ret = xlate_map_v6_to_v4(nat46, rule, pipv6, pipv4, 1);
       break;
     case NAT46_XLATE_RFC6052:
       ret = xlate_nat64_to_v4(nat46, rule, pipv6, pipv4);
@@ -877,9 +652,641 @@ int xlate_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv
   return ret;
 }
 
+__sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
+  u32 s;
+  csum = ntohs(~csum);
+  s = (u32)csum + ntohs(~old) + ntohs(new);
+  return htons(~ (u16)( ((s >> 16) & 0xffff) + (s & 0xffff)));
+}
+
+/* Add the TCP/UDP pseudoheader, basing on the existing checksum */
+
+__sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, unsigned short len,
+                  unsigned char proto, u16 csum) {
+  u16 *pdata;
+  int i;
+  u16 len0, len1;
+
+  pdata = (u16 *)&saddr;
+  csum = csum16_upd(csum, 0, *pdata++);
+  csum = csum16_upd(csum, 0, *pdata++);
+  pdata = (u16 *)&daddr;
+  csum = csum16_upd(csum, 0, *pdata++);
+  csum = csum16_upd(csum, 0, *pdata++);
+
+  csum = csum16_upd(csum, 0, htons(proto));
+  len1 = htons( (len >> 16) & 0xffff );
+  len0 = htons(len & 0xffff);
+  csum = csum16_upd(csum, 0, len1);
+  csum = csum16_upd(csum, 0, len0);
+  return csum;
+}
+
+/* Undo the IPv6 pseudoheader inclusion into the checksum */
+__sum16 csum_ipv6_unmagic(nat46_instance_t *nat46, const struct in6_addr *saddr,
+                        const struct in6_addr *daddr,
+                        __u32 len, unsigned short proto,
+                        __sum16 csum) {
+  u16 *pdata;
+  int i;
+  u16 len0, len1;
+
+  pdata = (u16 *)saddr;
+  for(i=0;i<8;i++) {
+    csum = csum16_upd(csum, *pdata, 0);
+    pdata++;
+  }
+  pdata = (u16 *)daddr;
+  for(i=0;i<8;i++) {
+    csum = csum16_upd(csum, *pdata, 0);
+    pdata++;
+  }
+  csum = csum16_upd(csum, htons(proto), 0);
+  len1 = htons( (len >> 16) & 0xffff );
+  len0 = htons(len & 0xffff);
+  csum = csum16_upd(csum, len1, 0);
+  csum = csum16_upd(csum, len0, 0);
+  return csum;
+}
+
+/* Update ICMPv6 type/code with incremental checksum adjustment */
+void update_icmp6_type_code(nat46_instance_t *nat46, struct icmp6hdr *icmp6h, u8 type, u8 code) {
+  u16 old_tc = (((uint16_t)icmp6h->icmp6_code) << 8) + icmp6h->icmp6_type;
+  u16 new_tc = (((uint16_t)code) << 8) + type;
+  u16 old_csum = icmp6h->icmp6_cksum;
+  /* https://tools.ietf.org/html/rfc1624 */
+  u16 new_csum = csum16_upd(old_csum, old_tc, new_tc);
+  nat46debug(1, "Updating the ICMPv6 type to ICMP type %d and code to %d. Old T/C: %04X, New T/C: %04X, Old CS: %04X, New CS: %04X", type, code, old_tc, new_tc, old_csum, new_csum);
+  icmp6h->icmp6_cksum = new_csum;
+  icmp6h->icmp6_type = type;
+  icmp6h->icmp6_code = code;
+}
+
+
+
+/* FIXME: traverse the headers properly */
+void *get_next_header_ptr6(void *pv6, int v6_len) {
+  struct ipv6hdr *ip6h = pv6;
+  return (ip6h+1);
+}
+
+void fill_v4hdr_from_v6hdr(struct iphdr * iph, struct ipv6hdr *ip6h, __u32 v4saddr, __u32 v4daddr, __u16 id, __u16 frag_off, __u16 proto, int l3_payload_len) {
+  iph->ttl = ip6h->hop_limit;
+  iph->saddr = v4saddr;
+  iph->daddr = v4daddr;
+  iph->protocol = proto;
+  *((__be16 *)iph) = htons((4 << 12) | (5 << 8) | (0x00/*tos*/ & 0xff));
+  iph->frag_off = frag_off;
+  iph->id = id;
+  iph->tot_len = htons( l3_payload_len + 20 /*sizeof(ipv4hdr)*/ );
+  iph->check = 0;
+  iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
+}
+
+u16 unchecksum16(void *p, int count, u16 csum) {
+  u16 *pu16 = p;
+  int i = count;
+  while(i--) {
+    csum = csum16_upd(csum, *pu16++, 0);
+  }
+  return csum;
+}
+
+u16 rechecksum16(void *p, int count, u16 csum) {
+  u16 *pu16 = p;
+  int i = count;
+  while(i--) {
+    csum = csum16_upd(csum, 0, *pu16++);
+  }
+  return csum;
+}
+
+/*
+ * pv6 is pointing to the ipv6 header inside the payload.
+ * Translate this header and attempt to extract the sport/dport
+ * so the callers can use them for translation as well.
+ */
+int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int v6_len, u16 *ul_sum, int *ptailTruncSize) {
+  struct ipv6hdr *ip6h = pv6;
+  __u32 v4saddr, v4daddr;
+  struct iphdr new_ipv4;
+  struct iphdr *iph = &new_ipv4;
+  u16 proto = ip6h->nexthdr;
+
+
+  /*
+   * The packet is supposedly our own packet after translation - so the rules
+   * will be swapped compared to translation of the outer packet
+   */
+  if(!xlate_v6_to_v4(nat46, &nat46->local_rule, &ip6h->saddr, &v4saddr)) {
+    nat46debug(0, "[nat46] Could not translate inner source address v6->v4");
+  }
+  if(!xlate_v6_to_v4(nat46, &nat46->remote_rule, &ip6h->daddr, &v4daddr)) {
+    nat46debug(0, "[nat46] Could not translate inner dest address v6->v4");
+  }
+
+  switch(proto) {
+    case NEXTHDR_TCP: {
+      struct tcphdr *th = ptrans_hdr;
+      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, ntohs(ip6h->payload_len), NEXTHDR_TCP, th->check);
+      u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, ntohs(ip6h->payload_len), NEXTHDR_TCP, sum1); /* add pseudoheader */
+      th->check = sum2;
+      break;
+      }
+    case NEXTHDR_UDP: {
+      struct udphdr *udp = ptrans_hdr;
+      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, ntohs(ip6h->payload_len), NEXTHDR_UDP, udp->check);
+      u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, ntohs(ip6h->payload_len), NEXTHDR_UDP, sum1); /* add pseudoheader */
+      if(ul_sum) {
+        *ul_sum = csum16_upd(*ul_sum, udp->check, sum2);
+        }
+      udp->check = sum2;
+      break;
+      }
+    case NEXTHDR_ICMP: {
+      struct icmp6hdr *icmp6h = ptrans_hdr;
+      switch(icmp6h->icmp6_type) {
+        case ICMPV6_ECHO_REQUEST:
+          update_icmp6_type_code(nat46, icmp6h, ICMP_ECHO, icmp6h->icmp6_code);
+          break;
+        case ICMPV6_ECHO_REPLY:
+          update_icmp6_type_code(nat46, icmp6h, ICMP_ECHOREPLY, icmp6h->icmp6_code);
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  fill_v4hdr_from_v6hdr(iph, ip6h, v4saddr, v4daddr, 0, htons(IP_DF), ip6h->nexthdr, ntohs(ip6h->payload_len));
+  if(ul_sum) {
+    *ul_sum = unchecksum16(pv6, 20, *ul_sum);
+    *ul_sum = rechecksum16(iph, 10, *ul_sum);
+  }
+
+  /* FIXME: get rid of magic numbers below */
+  memmove(((char *)pv6) + 20, get_next_header_ptr6(ip6h, v6_len), v6_len - 20);
+  memcpy(pv6, iph, 20);
+  *ptailTruncSize += 20;
+  return (v6_len - 20);
+}
+
+u8 *icmp_rfc4884len_ptr(struct icmphdr *icmph) {
+  u8 *prfc4884len = ((u8 *)(icmph))+5;
+  return prfc4884len;
+}
+
+u8 *icmp6_rfc4884len_ptr(struct icmp6hdr *icmp6h) {
+  u8 *prfc4884len = ((u8 *)(icmp6h))+4;
+  return prfc4884len;
+}
+
+u8 *icmp_parameter_ptr(struct icmphdr *icmph) {
+  u8 *icmp_pptr = ((u8 *)(icmph))+4;
+  return icmp_pptr;
+}
+
+u32 *icmp6_parameter_ptr(struct icmp6hdr *icmp6h) {
+  u32 *icmp6_pptr = ((u32 *)(icmp6h))+1;
+  return icmp6_pptr;
+}
+
+static void nat46_fixup_icmp6_dest_unreach(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
+  /*
+   * Destination Unreachable (Type 1)  Set the Type to 3, and adjust
+   * the ICMP checksum both to take the type/code change into
+   * account and to exclude the ICMPv6 pseudo-header.
+   *
+   * Translate the Code as follows:
+   *
+   * Code 0 (No route to destination):  Set the Code to 1 (Host
+   *            unreachable).
+   *
+   * Code 1 (Communication with destination administratively
+   *        prohibited):  Set the Code to 10 (Communication with
+   *        destination host administratively prohibited).
+   *
+   * Code 2 (Beyond scope of source address):  Set the Code to 1
+   *        (Host unreachable).  Note that this error is very unlikely
+   *        since an IPv4-translatable source address is typically
+   *        considered to have global scope.
+   *
+   * Code 3 (Address unreachable):  Set the Code to 1 (Host
+   *        unreachable).
+   *
+   * Code 4 (Port unreachable):  Set the Code to 3 (Port
+   *        unreachable).
+   *
+   * Other Code values:  Silently drop.
+   */
+
+  u8 *prfc4884len6 = icmp6_rfc4884len_ptr(icmp6h);
+  /* FIXME: http://tools.ietf.org/html/rfc4884 */
+  int len;
+
+  switch(icmp6h->icmp6_code) {
+    case 0:
+    case 2:
+    case 3:
+      update_icmp6_type_code(nat46, icmp6h, 3, 1);
+      break;
+    case 1:
+      update_icmp6_type_code(nat46, icmp6h, 3, 10);
+      break;
+    case 4:
+      update_icmp6_type_code(nat46, icmp6h, 3, 3);
+      break;
+    default:
+      ip6h->nexthdr = NEXTHDR_NONE;
+  }
+  len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
+  len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
+}
+
+static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb) {
+  /*
+   * Packet Too Big (Type 2):  Translate to an ICMPv4 Destination
+   * Unreachable (Type 3) with Code 4, and adjust the ICMPv4
+   * checksum both to take the type change into account and to
+   * exclude the ICMPv6 pseudo-header.  The MTU field MUST be
+   * adjusted for the difference between the IPv4 and IPv6 header
+   * sizes, taking into account whether or not the packet in error
+   * includes a Fragment Header, i.e., minimum(advertised MTU-20,
+   * MTU_of_IPv4_nexthop, (MTU_of_IPv6_nexthop)-20).
+   *
+   * See also the requirements in Section 6.
+   *
+   * Section 6 says this for v6->v4 side translation:
+   *
+   * 2.  In the IPv6-to-IPv4 direction:
+   *
+   *        A.  If there is a Fragment Header in the IPv6 packet, the last 16
+   *            bits of its value MUST be used for the IPv4 identification
+   *            value.
+   *
+   *        B.  If there is no Fragment Header in the IPv6 packet:
+   *
+   *            a.  If the packet is less than or equal to 1280 bytes:
+   *
+   *                -  The translator SHOULD set DF to 0 and generate an IPv4
+   *                   identification value.
+   *
+   *                -  To avoid the problems described in [RFC4963], it is
+   *                   RECOMMENDED that the translator maintain 3-tuple state
+   *                   for generating the IPv4 identification value.
+   *
+   *            b.  If the packet is greater than 1280 bytes, the translator
+   *                SHOULD set the IPv4 DF bit to 1.
+   */
+
+}
+
+static void nat46_fixup_icmp6_time_exceed(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
+  /*
+   * Time Exceeded (Type 3):  Set the Type to 11, and adjust the ICMPv4
+   * checksum both to take the type change into account and to
+   * exclude the ICMPv6 pseudo-header.  The Code is unchanged.
+   */
+  u8 *prfc4884len6 = icmp6_rfc4884len_ptr(icmp6h);
+  /* FIXME: http://tools.ietf.org/html/rfc4884 */
+  int len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
+  len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
+
+  update_icmp6_type_code(nat46, icmp6h, 11, icmp6h->icmp6_code);
+}
+
+static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb) {
+  /*
+   *         Parameter Problem (Type 4):  Translate the Type and Code as
+   *         follows, and adjust the ICMPv4 checksum both to take the type/
+   *         code change into account and to exclude the ICMPv6 pseudo-
+   *         header.
+   *
+   *         Translate the Code as follows:
+   *
+   *         Code 0 (Erroneous header field encountered):  Set to Type 12,
+   *            Code 0, and update the pointer as defined in Figure 6.  (If
+   *            the Original IPv6 Pointer Value is not listed or the
+   *            Translated IPv4 Pointer Value is listed as "n/a", silently
+   *            drop the packet.)
+   *
+   *         Code 1 (Unrecognized Next Header type encountered):  Translate
+   *            this to an ICMPv4 protocol unreachable (Type 3, Code 2).
+   *
+   *         Code 2 (Unrecognized IPv6 option encountered):  Silently drop.
+   *
+   *      Unknown error messages:  Silently drop.
+   *
+   *     +--------------------------------+--------------------------------+
+   *     |   Original IPv6 Pointer Value  | Translated IPv4 Pointer Value  |
+   *     +--------------------------------+--------------------------------+
+   *     |  0  | Version/Traffic Class    |  0  | Version/IHL, Type Of Ser |
+   *     |  1  | Traffic Class/Flow Label |  1  | Type Of Service          |
+   *     | 2,3 | Flow Label               | n/a |                          |
+   *     | 4,5 | Payload Length           |  2  | Total Length             |
+   *     |  6  | Next Header              |  9  | Protocol                 |
+   *     |  7  | Hop Limit                |  8  | Time to Live             |
+   *     | 8-23| Source Address           | 12  | Source Address           |
+   *     |24-39| Destination Address      | 16  | Destination Address      |
+   *     +--------------------------------+--------------------------------+
+   */
+  static int ptr6_4[] = { 0, 1, -1, -1, 2, 2, 9, 8,
+                          12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+                          16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, -1 };
+  u32 *pptr6 = icmp6_parameter_ptr(icmp6h);
+  u8 *pptr4 = icmp_parameter_ptr((struct icmphdr *)icmp6h);
+  int new_pptr = -1;
+
+  switch(icmp6h->icmp6_code) {
+    case 0:
+      if(*pptr6 < sizeof(ptr6_4)/sizeof(ptr6_4[0])) {
+        new_pptr = ptr6_4[*pptr6];
+        if (new_pptr >= 0) {
+          /* FIXME: store the new parameter pointer into ICMP4 while updating the checksum */
+          icmp6h->icmp6_cksum = csum16_upd(icmp6h->icmp6_cksum, (*pptr6 & 0xffff), (new_pptr << 8));
+          *pptr4 = 0xff & new_pptr;
+        } else {
+          ip6h->nexthdr = NEXTHDR_NONE;
+        }
+      } else {
+        ip6h->nexthdr = NEXTHDR_NONE;
+      }
+      break;
+    case 1:
+      update_icmp6_type_code(nat46, icmp6h, 3, 2);
+      break;
+    case 2: /* fallthrough to default */
+    default:
+      ip6h->nexthdr = NEXTHDR_NONE;
+  }
+}
+
+
+/* Fixup ICMP6->ICMP before IP header translation, according to http://tools.ietf.org/html/rfc6145 */
+
+static void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
+
+  if(icmp6h->icmp6_type & 128) {
+    /* Informational ICMP */
+    switch(icmp6h->icmp6_type) {
+      case ICMPV6_ECHO_REQUEST:
+        update_icmp6_type_code(nat46, icmp6h, ICMP_ECHO, icmp6h->icmp6_code);
+        break;
+      case ICMPV6_ECHO_REPLY:
+        update_icmp6_type_code(nat46, icmp6h, ICMP_ECHOREPLY, icmp6h->icmp6_code);
+        break;
+      default:
+        ip6h->nexthdr = NEXTHDR_NONE;
+    }
+  } else {
+    /* ICMPv6 errors */
+    switch(icmp6h->icmp6_type) {
+      case ICMPV6_DEST_UNREACH:
+        nat46_fixup_icmp6_dest_unreach(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
+        break;
+      case ICMPV6_PKT_TOOBIG:
+        nat46_fixup_icmp6_pkt_toobig(nat46, ip6h, icmp6h, old_skb);
+        break;
+      case ICMPV6_TIME_EXCEED:
+        nat46_fixup_icmp6_time_exceed(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
+        break;
+      case ICMPV6_PARAMPROB:
+        nat46_fixup_icmp6_paramprob(nat46, ip6h, icmp6h, old_skb);
+        break;
+      default:
+        ip6h->nexthdr = NEXTHDR_NONE;
+    }
+  }
+}
+
+
+int ip6_input_not_interested(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
+  if (old_skb->protocol != htons(ETH_P_IPV6)) {
+    nat46debug(3, "Not an IPv6 packet");
+    return 1;
+  }
+  if(old_skb->len < sizeof(struct ipv6hdr) || ip6h->version != 6) {
+    nat46debug(3, "Len short or not correct version: %d", ip6h->version);
+    return 1;
+  }
+  if (!(ipv6_addr_type(&ip6h->saddr) & IPV6_ADDR_UNICAST)) {
+    nat46debug(3, "Source address not unicast");
+    return 1;
+  }
+  // FIXME: add the verification that the source is within the DMR
+  // FIXME: add the verification that the destination matches our v6 "outside" address
+  return 0;
+}
+
+static uint16_t nat46_fixup_icmp_time_exceeded(nat46_instance_t *nat46, struct iphdr *iph, struct icmphdr *icmph, struct sk_buff *old_skb) {
+  /*
+   * Set the Type to 3, and adjust the
+   * ICMP checksum both to take the type change into account and
+   * to include the ICMPv6 pseudo-header.  The Code is unchanged.
+   */
+  u8 *prfc4884len4 = icmp_rfc4884len_ptr(icmph);
+  /* FIXME: http://tools.ietf.org/html/rfc4884 */
+  icmph->type = 3;
+  return 0;
+}
+
+static uint16_t nat46_fixup_icmp_parameterprob(nat46_instance_t *nat46, struct iphdr *iph, struct icmphdr *icmph, struct sk_buff *old_skb) {
+  /*
+   * Set the Type to 4, and adjust the
+   * ICMP checksum both to take the type/code change into account
+   * and to include the ICMPv6 pseudo-header.
+   *
+   * Translate the Code as follows:
+   *
+   * Code 0 (Pointer indicates the error):  Set the Code to 0
+   * (Erroneous header field encountered) and update the
+   * pointer as defined in Figure 3.  (If the Original IPv4
+   * Pointer Value is not listed or the Translated IPv6
+   * Pointer Value is listed as "n/a", silently drop the
+   * packet.)
+   *
+   * Code 1 (Missing a required option):  Silently drop.
+   *
+   * Code 2 (Bad length):  Set the Code to 0 (Erroneous header
+   * field encountered) and update the pointer as defined in
+   * Figure 3.  (If the Original IPv4 Pointer Value is not
+   * listed or the Translated IPv6 Pointer Value is listed as
+   * "n/a", silently drop the packet.)
+   *
+   *            Other Code values:  Silently drop.
+   *
+   *     +--------------------------------+--------------------------------+
+   *     |   Original IPv4 Pointer Value  | Translated IPv6 Pointer Value  |
+   *     +--------------------------------+--------------------------------+
+   *     |  0  | Version/IHL              |  0  | Version/Traffic Class    |
+   *     |  1  | Type Of Service          |  1  | Traffic Class/Flow Label |
+   *     | 2,3 | Total Length             |  4  | Payload Length           |
+   *     | 4,5 | Identification           | n/a |                          |
+   *     |  6  | Flags/Fragment Offset    | n/a |                          |
+   *     |  7  | Fragment Offset          | n/a |                          |
+   *     |  8  | Time to Live             |  7  | Hop Limit                |
+   *     |  9  | Protocol                 |  6  | Next Header              |
+   *     |10,11| Header Checksum          | n/a |                          |
+   *     |12-15| Source Address           |  8  | Source Address           |
+   *     |16-19| Destination Address      | 24  | Destination Address      |
+   *     +--------------------------------+--------------------------------+
+   */
+  u8 *prfc4884len4 = icmp_rfc4884len_ptr(icmph);
+  /* FIXME: http://tools.ietf.org/html/rfc4884 */
+  static int ptr4_6[] = { 0, 1, 4, 4, -1, -1, -1, -1, 7, 6, -1, -1, 8, 8, 8, 8, 24, 24, 24, 24, -1 };
+  u8 *icmp_pptr = icmp_parameter_ptr(icmph);
+  int new_pptr = -1;
+  switch (icmph->code) {
+    case 0:
+    case 2:
+      if (*icmp_pptr < (sizeof(ptr4_6)/sizeof(ptr4_6[0]))) {
+        icmph->code = 0;
+        new_pptr = ptr4_6[*icmp_pptr];
+        if(new_pptr >= 0) { 
+          /* FIXME: update the parameter pointer in ICMPv6 with new_pptr value */
+        }
+      } else {
+        iph->protocol = NEXTHDR_NONE;
+      }
+      break;
+    default:
+      iph->protocol = NEXTHDR_NONE;
+  }
+  return 0;
+}
+
+static uint16_t nat46_fixup_icmp_dest_unreach(nat46_instance_t *nat46, struct iphdr *iph, struct icmphdr *icmph, struct sk_buff *old_skb) {
+  /*
+   *    Translate the Code as
+   *    described below, set the Type to 1, and adjust the ICMP
+   *    checksum both to take the type/code change into account and
+   *    to include the ICMPv6 pseudo-header.
+   *
+   *    Translate the Code as follows:
+   *
+   *    Code 0, 1 (Net Unreachable, Host Unreachable):  Set the Code
+   *       to 0 (No route to destination).
+   *
+   *    Code 2 (Protocol Unreachable):  Translate to an ICMPv6
+   *       Parameter Problem (Type 4, Code 1) and make the Pointer
+   *       point to the IPv6 Next Header field.
+   *
+   *    Code 3 (Port Unreachable):  Set the Code to 4 (Port
+   *       unreachable).
+   *
+   *    Code 4 (Fragmentation Needed and DF was Set):  Translate to
+   *       an ICMPv6 Packet Too Big message (Type 2) with Code set
+   *       to 0.  The MTU field MUST be adjusted for the difference
+   *       between the IPv4 and IPv6 header sizes, i.e.,
+   *       minimum(advertised MTU+20, MTU_of_IPv6_nexthop,
+   *       (MTU_of_IPv4_nexthop)+20).  Note that if the IPv4 router
+   *       set the MTU field to zero, i.e., the router does not
+   *       implement [RFC1191], then the translator MUST use the
+   *       plateau values specified in [RFC1191] to determine a
+   *       likely path MTU and include that path MTU in the ICMPv6
+   *       packet.  (Use the greatest plateau value that is less
+   *       than the returned Total Length field.)
+   *
+   *       See also the requirements in Section 6.
+   *
+   *    Code 5 (Source Route Failed):  Set the Code to 0 (No route
+   *       to destination).  Note that this error is unlikely since
+   *       source routes are not translated.
+   *
+   *    Code 6, 7, 8:  Set the Code to 0 (No route to destination).
+   *
+   *    Code 9, 10 (Communication with Destination Host
+   *       Administratively Prohibited):  Set the Code to 1
+   *       (Communication with destination administratively
+   *       prohibited).
+   *
+   *    Code 11, 12:  Set the Code to 0 (No route to destination).
+   *
+   *    Code 13 (Communication Administratively Prohibited):  Set
+   *       the Code to 1 (Communication with destination
+   *       administratively prohibited).
+   *
+   *    Code 14 (Host Precedence Violation):  Silently drop.
+   *
+   *    Code 15 (Precedence cutoff in effect):  Set the Code to 1
+   *       (Communication with destination administratively
+   *       prohibited).
+   *
+   *    Other Code values:  Silently drop.
+   *
+   */
+  u8 *prfc4884len4 = icmp_rfc4884len_ptr(icmph);
+  /* FIXME: http://tools.ietf.org/html/rfc4884 */
+
+  switch (icmph->code) {
+    case 0:
+    case 1:
+      icmph->code = 0;
+      break;
+    case 2:
+      /* FIXME: set ICMPv6 parameter pointer to 6 */
+      icmph->type = 4;
+      icmph->code = 1;
+      break;
+    case 3:
+      icmph->code = 4;
+      break;
+    case 4:
+      /*
+       * On adjusting the signaled MTU within packet:
+       *
+       * IPv4 has 20 bytes smaller header size, so, standard says
+       * we can advertise a higher MTU here. However, then we will
+       * need to ensure it does not overshoot our egress link MTU,
+       * which implies knowing the egress interface, which is
+       * not trivial in the current model.
+       *
+       * So, we'd want to leave the MTU as aside. But, the Section 6
+       * has something more to say:
+       *
+       *   1.  In the IPv4-to-IPv6 direction: if the MTU value of ICMPv4 Packet
+       *     Too Big (PTB) messages is less than 1280, change it to 1280.
+       *     This is intended to cause the IPv6 host and IPv6 firewall to
+       *     process the ICMP PTB message and generate subsequent packets to
+       *     this destination with an IPv6 Fragment Header.
+       *
+       */
+      /* FIXME: check if MTU < 1280, and change it to 1280 then */
+      icmph->type = 2;
+      icmph->code = 0;
+      break;
+    case 5:
+    case 6:
+    case 7:
+    case 8:
+      icmph->code = 0;
+      break;
+    case 9:
+    case 10:
+      icmph->code = 1;
+      break;
+    case 11:
+    case 12:
+      icmph->code = 0;
+      break;
+    case 13:
+    case 15:
+      icmph->code = 1;
+      break;
+    default:
+      iph->protocol = NEXTHDR_NONE;
+  }
+  return 0;
+}
+
+
+/* Fixup ICMP->ICMP6 before IP header translation, according to http://tools.ietf.org/html/rfc6145 */
+
 static uint16_t nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
   struct icmphdr *icmph = (struct icmphdr *)(iph+1);
   uint16_t ret = 0;
+
+  iph->protocol = NEXTHDR_ICMP;
 
   switch(icmph->type) {
     case ICMP_ECHO:
@@ -892,80 +1299,141 @@ static uint16_t nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, str
       ret = icmph->un.echo.id;
       nat46debug(3, "ICMP echo reply translated into IPv6, id: %d", ntohs(ret)); 
       break;
+    case ICMP_TIME_EXCEEDED:
+      ret = nat46_fixup_icmp_time_exceeded(nat46, iph, icmph, old_skb);
+      break;
+    case ICMP_PARAMETERPROB:
+      ret = nat46_fixup_icmp_parameterprob(nat46, iph, icmph, old_skb);
+      break;
+    case ICMP_DEST_UNREACH:
+      ret = nat46_fixup_icmp_dest_unreach(nat46, iph, icmph, old_skb);
+      break;
+    default:
+      /* Silently drop. */
+      iph->protocol = NEXTHDR_NONE;
   }
-  iph->protocol = NEXTHDR_ICMP;
   return ret;
 }
 
+u16 get_next_ip_id() {
+  static u16 id = 0;
+  return id++;
+}
 
+u16 fold_ipv6_frag_id(u32 v6id) {
+  return ((0xffff & (v6id >> 16)) ^ (v6id & 0xffff));
+}
+
+void *add_offset(void *ptr, u16 offset) {
+  return (((char *)ptr)+offset);
+}
 
 void nat46_ipv6_input(struct sk_buff *old_skb) {
   struct ipv6hdr *ip6h = ipv6_hdr(old_skb);
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
-  uint16_t proto, sport = 0, dport = 0;
+  uint16_t proto;
+  uint16_t frag_off;
+  uint16_t frag_id;
 
   struct iphdr * iph;
   __u32 v4saddr, v4daddr;
   struct sk_buff * new_skb = 0;
   int truncSize = 0;
+  int tailTruncSize = 0;
+  int v6packet_l3size = sizeof(*ip6h);
+  int l3_infrag_payload_len = ntohs(ip6h->payload_len);
+  int do_l4_translate = 0;
 
-  nat46debug(1, "nat46_ipv6_input packet");
+  nat46debug(4, "nat46_ipv6_input packet");
 
   if(ip6_input_not_interested(nat46, ip6h, old_skb)) {
     nat46debug(1, "nat46_ipv6_input not interested");
     goto done;
   }
-  nat46debug(1, "nat46_ipv6_input next hdr: %d, len: %d, is_fragment: %d", 
+  nat46debug(5, "nat46_ipv6_input next hdr: %d, len: %d, is_fragment: %d",
                 ip6h->nexthdr, old_skb->len, ip6h->nexthdr == NEXTHDR_FRAGMENT);
-  // debug_dump(DBG_V6, 1, old_skb->data, 64);
-
   proto = ip6h->nexthdr;
   if (proto == NEXTHDR_FRAGMENT) {
-    nat46debug(5, "Trying reassembly for fragment");
-    old_skb = try_reassembly(nat46, old_skb);
-    if (!old_skb) {
-      goto done;
+    struct frag_hdr *fh = (struct frag_hdr*)(ip6h + 1);
+    v6packet_l3size += sizeof(struct frag_hdr);
+    l3_infrag_payload_len -= sizeof(struct frag_hdr);
+    nat46debug(2, "Fragment ID: %08X", fh->identification);
+    nat46debug_dump(nat46, 6, fh, ntohs(ip6h->payload_len));
+
+    if(fh->frag_off == 0) {
+      /* Atomic fragment */
+      proto = fh->nexthdr;
+      frag_off = 0; /* no DF bit */
+      frag_id = fold_ipv6_frag_id(fh->identification);
+      nat46debug(2, "Atomic fragment");
+      do_l4_translate = 1;
+    } else {
+      if (0 == (ntohs(fh->frag_off) & IP6_OFFSET)) {
+        /* First fragment. Pretend business as usual, but when creating IP, set the "MF" bit. */
+        frag_off = htons(((ntohs(fh->frag_off) & 7) << 13) + (((ntohs(fh->frag_off) >> 3) & 0x1FFF)));
+        frag_id = fold_ipv6_frag_id(fh->identification);
+	/* ntohs(fh->frag_off) & IP6_MF */
+        proto = fh->nexthdr;
+        do_l4_translate = 1;
+        nat46debug(2, "First fragment, frag_off: %04X, frag id: %04X orig frag_off: %04X", ntohs(frag_off), frag_id, ntohs(fh->frag_off));
+      } else {
+        /* Not the first fragment - leave as is, allow to translate IPv6->IPv4 */
+        proto = fh->nexthdr;
+        frag_off = htons(((ntohs(fh->frag_off) & 7) << 13) + (((ntohs(fh->frag_off) >> 3) & 0x1FFF)));
+        frag_id = fold_ipv6_frag_id(fh->identification);
+        nat46debug(2, "Not first fragment, frag_off: %04X, frag id: %04X orig frag_off: %04X", ntohs(frag_off), frag_id, ntohs(fh->frag_off));
+      }
     }
-    ip6h = ipv6_hdr(old_skb);
-    proto = ip6h->nexthdr;
-    nat46debug(5, "New proto after reassembly: %d", proto);
+  } else {
+    frag_off = htons(IP_DF);
+    frag_id = get_next_ip_id();
+    do_l4_translate = 1;
   }
   
-  switch(proto) {
-    case NEXTHDR_TCP: {
-      struct tcphdr *th = tcp_hdr(old_skb);
-      sport = th->source;
-      dport = th->dest;
-      break;
-      }
-    case NEXTHDR_UDP: {
-      struct udphdr *udp = udp_hdr(old_skb);
-      sport = udp->source;
-      dport = udp->dest;
-      break;
-      }
-    case NEXTHDR_ICMP:
-      sport = dport = nat46_fixup_icmp6(nat46, ip6h, old_skb);
-      break;
-    case NEXTHDR_FRAGMENT:
-      nat46debug(2, "[ipv6] Next header is fragment. Not doing anything.");
-      goto done;
-      break;
-    default:
-      nat46debug(0, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP6 are supported.", proto);
-      goto done;
-  }
-
-
-  if(!xlate_v6_to_v4(nat46, &nat46->remote_rule, &ip6h->saddr, &v4saddr, sport)) {
-    nat46debug(0, "[nat46] Could not translate remote address v6->v4");
-    goto done;
-  }
-  if(!xlate_v6_to_v4(nat46, &nat46->local_rule, &ip6h->daddr, &v4daddr, dport)) {
+  if(!xlate_v6_to_v4(nat46, &nat46->local_rule, &ip6h->daddr, &v4daddr)) {
     nat46debug(0, "[nat46] Could not translate local address v6->v4");
     goto done;
   }
-    
+  if(!xlate_v6_to_v4(nat46, &nat46->remote_rule, &ip6h->saddr, &v4saddr)) {
+    if(proto == NEXTHDR_ICMP) {
+      nat46debug(1, "[nat46] Could not translate remote address v6->v4, but protocol is ICMP6, so using our local addr as a stub");
+      v4saddr = v4daddr;
+    } else {
+      nat46debug(0, "[nat46] Could not translate remote address v6->v4");
+      goto done;
+    }
+  }
+  if (do_l4_translate) {
+    switch(proto) {
+      /* CHECKSUMS UPDATE */
+      case NEXTHDR_TCP: {
+        struct tcphdr *th = add_offset(ip6h, v6packet_l3size);
+        u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_TCP, th->check);
+        u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, l3_infrag_payload_len, NEXTHDR_TCP, sum1);
+        th->check = sum2;
+        break;
+        }
+      case NEXTHDR_UDP: {
+        struct udphdr *udp = add_offset(ip6h, v6packet_l3size);
+        u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_UDP, udp->check);
+        u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, l3_infrag_payload_len, NEXTHDR_UDP, sum1);
+        udp->check = sum2;
+        break;
+        }
+      case NEXTHDR_ICMP: {
+        struct icmp6hdr *icmp6h = add_offset(ip6h, v6packet_l3size);
+        u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_ICMP, icmp6h->icmp6_cksum);
+        icmp6h->icmp6_cksum = sum1;
+        nat46debug_dump(nat46, 10, icmp6h, l3_infrag_payload_len);
+        nat46_fixup_icmp6(nat46, ip6h, icmp6h, old_skb, &tailTruncSize);
+        proto = IPPROTO_ICMP;
+        break;
+        }
+      default:
+        nat46debug(0, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP6 are supported.", proto);
+        goto done;
+    }
+  }
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC); // other possible option: GFP_ATOMIC
   
@@ -979,30 +1447,21 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   new_skb->nfct = NULL;
 
   /* modify packet: actual IPv6->IPv4 transformation */
-  truncSize = sizeof(struct ipv6hdr) - sizeof(struct iphdr); /* chop first 20 bytes */
+  truncSize = v6packet_l3size - sizeof(struct iphdr); /* chop first 20 bytes */
   skb_pull(new_skb, truncSize);
+  skb_put(new_skb, -tailTruncSize);
+  l3_infrag_payload_len -= tailTruncSize;
   skb_reset_network_header(new_skb);
   skb_set_transport_header(new_skb,20); /* transport (TCP/UDP/ICMP/...) header starts after 20 bytes */
 
   /* build IPv4 header */
   iph = ip_hdr(new_skb);
-  iph->ttl = ip6h->hop_limit;
-  iph->saddr = v4saddr;
-  iph->daddr = v4daddr;
-  iph->protocol = ip6h->nexthdr;
-  *((__be16 *)iph) = htons((4 << 12) | (5 << 8) | (0x00/*tos*/ & 0xff));
-  iph->frag_off = htons(IP_DF);
+  fill_v4hdr_from_v6hdr(iph, ip6h, v4saddr, v4daddr, frag_id, frag_off, proto, l3_infrag_payload_len);
+  new_skb->protocol = htons(ETH_P_IP);
 
-  /* iph->tot_len = htons(new_skb->len); // almost good, but it may cause troubles with sizeof(IPv6 pkt)<64 (padding issue) */
-  iph->tot_len = htons( ntohs(ip6h->payload_len)+ 20 /*sizeof(ipv4hdr)*/ );
   if (ntohs(iph->tot_len) >= 2000) {
     nat46debug(0, "Too big IP len: %d", ntohs(iph->tot_len));
   }
-  iph->check = 0;
-  iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
-  new_skb->protocol = htons(ETH_P_IP);
-
-  ipv4_update_csum(new_skb, iph); /* update L4 (TCP/UDP/ICMP) checksum */
 
   new_skb->dev = old_skb->dev;
   nat46debug(5, "about to send v4 packet, flags: %02x",  IPCB(new_skb)->flags);
@@ -1052,7 +1511,6 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr)
     case NEXTHDR_ICMP: {
       struct icmp6hdr *icmp6h = (struct icmp6hdr *)(ip6hdr + 1);
       unsigned icmp6len = 0;
-
       icmp6len = ntohs(ip6hdr->payload_len); /* ICMP header + payload */
       icmp6h->icmp6_cksum = 0;
       sum1 = csum_partial((char*)icmp6h, icmp6len, 0); /* calculate checksum for TCP hdr+payload */

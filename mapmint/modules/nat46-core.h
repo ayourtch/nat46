@@ -7,22 +7,6 @@
 // #define nat46debug(level, format, ...)
 #define nat46debug(level, format, ...) do { if(nat46->debug >= level) { printk(format "\n", ##__VA_ARGS__); } } while (0)
 
-// #define nat46_reasm_debug(level, format, ...) debug(DBG_REASM, level, format, __VA_ARGS__)
-// #define nat46_reasm_debug(level, format, ...)
-#define nat46_reasm_debug(level, format, ...) do { if(nat46->debug >= level) { printk(format "\n", ##__VA_ARGS__); } } while (0)
-
-typedef struct {
-  struct  in6_addr        saddr;
-  struct  in6_addr        daddr;
-  __be32  identification;
-  struct sk_buff *skb;
-  __be16  frag_off;
-} reasm_item_t;
-
-#define NAT46_MAX_V6_FRAGS 32
-#define NAT46_SIGNATURE 0x544e3634
-
-
 /* 
  * A generic v4<->v6 translation structure.
  * The currently supported translation styles:
@@ -34,6 +18,8 @@ typedef enum {
   NAT46_XLATE_MAP0,
   NAT46_XLATE_RFC6052
 } nat46_xlate_style_t;
+
+#define NAT46_SIGNATURE 0x544e3634
      
 typedef struct {
   nat46_xlate_style_t style;
@@ -52,9 +38,6 @@ typedef struct {
 
   nat46_xlate_rule_t local_rule;
   nat46_xlate_rule_t remote_rule;
-
-  reasm_item_t frags[NAT46_MAX_V6_FRAGS];
-  int nfrags;
 } nat46_instance_t;
 
 void nat46_ipv6_input(struct sk_buff *old_skb);
