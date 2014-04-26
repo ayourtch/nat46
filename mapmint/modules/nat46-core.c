@@ -791,6 +791,9 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
       struct tcphdr *th = ptrans_hdr;
       u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, ntohs(ip6h->payload_len), NEXTHDR_TCP, th->check);
       u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, ntohs(ip6h->payload_len), NEXTHDR_TCP, sum1); /* add pseudoheader */
+      if(ul_sum) {
+        *ul_sum = csum16_upd(*ul_sum, th->check, sum2);
+        }
       th->check = sum2;
       break;
       }
@@ -806,6 +809,13 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
       }
     case NEXTHDR_ICMP: {
       struct icmp6hdr *icmp6h = ptrans_hdr;
+      u16 sum0 = icmp6h->icmp6_cksum;
+      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, ntohs(ip6h->payload_len), NEXTHDR_ICMP, icmp6h->icmp6_cksum);
+      if(ul_sum) {
+        *ul_sum = csum16_upd(*ul_sum, sum0, sum1);
+        }
+      icmp6h->icmp6_cksum = sum1;
+      proto = IPPROTO_ICMP;
       switch(icmp6h->icmp6_type) {
         case ICMPV6_ECHO_REQUEST:
           update_icmp6_type_code(nat46, icmp6h, ICMP_ECHO, icmp6h->icmp6_code);
@@ -819,7 +829,7 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
     }
   }
 
-  fill_v4hdr_from_v6hdr(iph, ip6h, v4saddr, v4daddr, 0, htons(IP_DF), ip6h->nexthdr, ntohs(ip6h->payload_len));
+  fill_v4hdr_from_v6hdr(iph, ip6h, v4saddr, v4daddr, 0, htons(IP_DF), proto, ntohs(ip6h->payload_len));
   if(ul_sum) {
     *ul_sum = unchecksum16(pv6, 20, *ul_sum);
     *ul_sum = rechecksum16(iph, 10, *ul_sum);
