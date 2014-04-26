@@ -1486,7 +1486,7 @@ done:
 
 
 
-void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr)
+void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomic_frag)
 {
   u32 sum1=0;
   u16 sum2=0;
@@ -1498,7 +1498,7 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr)
       unsigned tcplen = 0;
 
       oldsum = th->check;
-      tcplen = ntohs(ip6hdr->payload_len); /* TCP header + payload */
+      tcplen = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* TCP header + payload */
       th->check = 0;
       sum1 = csum_partial((char*)th, tcplen, 0); /* calculate checksum for TCP hdr+payload */
       sum2 = csum_ipv6_magic(&ip6hdr->saddr, &ip6hdr->daddr, tcplen, ip6hdr->nexthdr, sum1); /* add pseudoheader */
@@ -1507,7 +1507,7 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr)
       }
     case IPPROTO_UDP: {
       struct udphdr *udp = udp_hdr(skb);
-      unsigned udplen = ntohs(ip6hdr->payload_len); /* UDP hdr + payload */
+      unsigned udplen = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* UDP hdr + payload */
 
       oldsum = udp->check;
       udp->check = 0;
@@ -1520,9 +1520,9 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr)
       break;
       }
     case NEXTHDR_ICMP: {
-      struct icmp6hdr *icmp6h = (struct icmp6hdr *)(ip6hdr + 1);
+      struct icmp6hdr *icmp6h = icmp_hdr(skb);
       unsigned icmp6len = 0;
-      icmp6len = ntohs(ip6hdr->payload_len); /* ICMP header + payload */
+      icmp6len = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* ICMP header + payload */
       icmp6h->icmp6_cksum = 0;
       sum1 = csum_partial((char*)icmp6h, icmp6len, 0); /* calculate checksum for TCP hdr+payload */
       sum2 = csum_ipv6_magic(&ip6hdr->saddr, &ip6hdr->daddr, icmp6len, ip6hdr->nexthdr, sum1); /* add pseudoheader */
@@ -1548,6 +1548,8 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
 
   int tclass = 0;
   int flowlabel = 0;
+
+  int do_atomic_frag = 1;
 
   struct ipv6hdr * hdr6;
   struct iphdr * hdr4 = ip_hdr(old_skb);
@@ -1604,23 +1606,22 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
 
   /* expand header (add 20 extra bytes at the beginning of sk_buff) */
-  pskb_expand_head(new_skb, 20, 0, GFP_ATOMIC);
+  pskb_expand_head(new_skb, 20 + (do_atomic_frag?8:0), 0, GFP_ATOMIC);
 
-  skb_push(new_skb, sizeof(struct ipv6hdr) - sizeof(struct iphdr)); /* push boundary by extra 20 bytes */
+  skb_push(new_skb, sizeof(struct ipv6hdr) - sizeof(struct iphdr) + (do_atomic_frag?8:0)); /* push boundary by extra 20 bytes */
 
   skb_reset_network_header(new_skb);
-  skb_set_transport_header(new_skb, 40); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
+  skb_set_transport_header(new_skb, 40 + (do_atomic_frag?8:0) ); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
 
   hdr6 = ipv6_hdr(new_skb);
-  memset(hdr6, 0, sizeof(*hdr6));
+  memset(hdr6, 0, sizeof(*hdr6) + (do_atomic_frag?8:0));
 
   /* build IPv6 header */
   tclass = 0; /* traffic class */
   *(__be32 *)hdr6 = htonl(0x60000000 | (tclass << 20)) | flowlabel; /* version, priority, flowlabel */
 
   /* IPv6 length is a payload length, IPv4 is hdr+payload */
-  hdr6->payload_len = htons(ntohs(hdr4->tot_len) - sizeof(struct iphdr)); 
-
+  hdr6->payload_len = htons(ntohs(hdr4->tot_len) - sizeof(struct iphdr) + (do_atomic_frag?8:0)); 
   hdr6->nexthdr = hdr4->protocol;
   hdr6->hop_limit = hdr4->ttl;
   memcpy(&hdr6->saddr, v6saddr, 16);
@@ -1630,7 +1631,16 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   // new_skb->mark = old_skb->mark;
   new_skb->protocol = htons(ETH_P_IPV6);
 
-  ip6_update_csum(new_skb, hdr6);
+  if (do_atomic_frag) {
+    struct frag_hdr *fh = (struct frag_hdr*)(hdr6 + 1);
+    fh->frag_off = 0;
+    fh->nexthdr = hdr4->protocol;
+    fh->identification = hdr4->id;
+  }
+  ip6_update_csum(new_skb, hdr6, do_atomic_frag);
+
+  hdr6->nexthdr = do_atomic_frag ? NEXTHDR_FRAGMENT : hdr4->protocol;
+
 
   // FIXME: check if you can not fit the packet into the cached MTU
   // if (dst_mtu(skb_dst(new_skb))==0) { }
