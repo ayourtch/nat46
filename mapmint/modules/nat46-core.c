@@ -724,11 +724,33 @@ void update_icmp6_type_code(nat46_instance_t *nat46, struct icmp6hdr *icmp6h, u8
 }
 
 
+u16 get_next_ip_id() {
+  static u16 id = 0;
+  return id++;
+}
+
+u16 fold_ipv6_frag_id(u32 v6id) {
+  return ((0xffff & (v6id >> 16)) ^ (v6id & 0xffff));
+}
+
+void *add_offset(void *ptr, u16 offset) {
+  return (((char *)ptr)+offset);
+}
+
 
 /* FIXME: traverse the headers properly */
 void *get_next_header_ptr6(void *pv6, int v6_len) {
   struct ipv6hdr *ip6h = pv6;
-  return (ip6h+1);
+  void *ret = (ip6h+1);
+
+  if (ip6h->nexthdr == NEXTHDR_FRAGMENT) {
+    struct frag_hdr *fh = (struct frag_hdr*)(ip6h + 1);
+    if(fh->frag_off == 0) {
+      /* Atomic fragment */
+      ret = add_offset(ret, 8);
+    }
+  }
+  return ret;
 }
 
 void fill_v4hdr_from_v6hdr(struct iphdr * iph, struct ipv6hdr *ip6h, __u32 v4saddr, __u32 v4daddr, __u16 id, __u16 frag_off, __u16 proto, int l3_payload_len) {
@@ -773,6 +795,9 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
   struct iphdr new_ipv4;
   struct iphdr *iph = &new_ipv4;
   u16 proto = ip6h->nexthdr;
+  u16 ipid = 0;
+  u16 ipflags = htons(IP_DF);
+  int infrag_payload_len = ntohs(ip6h->payload_len);
 
 
   /*
@@ -786,11 +811,25 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
     nat46debug(0, "[nat46] Could not translate inner dest address v6->v4");
   }
 
+  if (proto == NEXTHDR_FRAGMENT) {
+    struct frag_hdr *fh = (struct frag_hdr*)(ip6h + 1);
+    if(fh->frag_off == 0) {
+      /* Atomic fragment */
+      proto = fh->nexthdr;
+      ipid = fold_ipv6_frag_id(fh->identification);
+      v6_len -= 8;
+      infrag_payload_len -= 8;
+      *ptailTruncSize += 8;
+      ipflags = 0;
+    }
+  }
+
+
   switch(proto) {
     case NEXTHDR_TCP: {
       struct tcphdr *th = ptrans_hdr;
-      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, ntohs(ip6h->payload_len), NEXTHDR_TCP, th->check);
-      u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, ntohs(ip6h->payload_len), NEXTHDR_TCP, sum1); /* add pseudoheader */
+      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, infrag_payload_len, NEXTHDR_TCP, th->check);
+      u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, infrag_payload_len, NEXTHDR_TCP, sum1); /* add pseudoheader */
       if(ul_sum) {
         *ul_sum = csum16_upd(*ul_sum, th->check, sum2);
         }
@@ -799,8 +838,8 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
       }
     case NEXTHDR_UDP: {
       struct udphdr *udp = ptrans_hdr;
-      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, ntohs(ip6h->payload_len), NEXTHDR_UDP, udp->check);
-      u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, ntohs(ip6h->payload_len), NEXTHDR_UDP, sum1); /* add pseudoheader */
+      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, infrag_payload_len, NEXTHDR_UDP, udp->check);
+      u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, infrag_payload_len, NEXTHDR_UDP, sum1); /* add pseudoheader */
       if(ul_sum) {
         *ul_sum = csum16_upd(*ul_sum, udp->check, sum2);
         }
@@ -810,7 +849,7 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
     case NEXTHDR_ICMP: {
       struct icmp6hdr *icmp6h = ptrans_hdr;
       u16 sum0 = icmp6h->icmp6_cksum;
-      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, ntohs(ip6h->payload_len), NEXTHDR_ICMP, icmp6h->icmp6_cksum);
+      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, infrag_payload_len, NEXTHDR_ICMP, icmp6h->icmp6_cksum);
       if(ul_sum) {
         *ul_sum = csum16_upd(*ul_sum, sum0, sum1);
         }
@@ -829,9 +868,9 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
     }
   }
 
-  fill_v4hdr_from_v6hdr(iph, ip6h, v4saddr, v4daddr, 0, htons(IP_DF), proto, ntohs(ip6h->payload_len));
+  fill_v4hdr_from_v6hdr(iph, ip6h, v4saddr, v4daddr, ipid, ipflags, proto, infrag_payload_len);
   if(ul_sum) {
-    *ul_sum = unchecksum16(pv6, 20, *ul_sum);
+    *ul_sum = unchecksum16(pv6, (((u8 *)ptrans_hdr)-((u8 *)pv6))/2, *ul_sum);
     *ul_sum = rechecksum16(iph, 10, *ul_sum);
   }
 
@@ -1324,19 +1363,6 @@ static uint16_t nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, str
       iph->protocol = NEXTHDR_NONE;
   }
   return ret;
-}
-
-u16 get_next_ip_id() {
-  static u16 id = 0;
-  return id++;
-}
-
-u16 fold_ipv6_frag_id(u32 v6id) {
-  return ((0xffff & (v6id >> 16)) ^ (v6id & 0xffff));
-}
-
-void *add_offset(void *ptr, u16 offset) {
-  return (((char *)ptr)+offset);
 }
 
 void nat46_ipv6_input(struct sk_buff *old_skb) {
