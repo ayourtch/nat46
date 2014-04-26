@@ -711,15 +711,16 @@ __sum16 csum_ipv6_unmagic(nat46_instance_t *nat46, const struct in6_addr *saddr,
 
 /* Update ICMPv6 type/code with incremental checksum adjustment */
 void update_icmp6_type_code(nat46_instance_t *nat46, struct icmp6hdr *icmp6h, u8 type, u8 code) {
-  u16 old_tc = (((uint16_t)icmp6h->icmp6_code) << 8) + icmp6h->icmp6_type;
-  u16 new_tc = (((uint16_t)code) << 8) + type;
+  u16 old_tc = *((u16 *)icmp6h);
+  u16 new_tc;
   u16 old_csum = icmp6h->icmp6_cksum;
+  icmp6h->icmp6_type = type;
+  icmp6h->icmp6_code = code;
+  new_tc = *((u16 *)icmp6h);
   /* https://tools.ietf.org/html/rfc1624 */
   u16 new_csum = csum16_upd(old_csum, old_tc, new_tc);
   nat46debug(1, "Updating the ICMPv6 type to ICMP type %d and code to %d. Old T/C: %04X, New T/C: %04X, Old CS: %04X, New CS: %04X", type, code, old_tc, new_tc, old_csum, new_csum);
   icmp6h->icmp6_cksum = new_csum;
-  icmp6h->icmp6_type = type;
-  icmp6h->icmp6_code = code;
 }
 
 
