@@ -1546,7 +1546,7 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomi
       break;
       }
     case NEXTHDR_ICMP: {
-      struct icmp6hdr *icmp6h = icmp_hdr(skb);
+      struct icmp6hdr *icmp6h = icmp6_hdr(skb);
       unsigned icmp6len = 0;
       icmp6len = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* ICMP header + payload */
       icmp6h->icmp6_cksum = 0;
