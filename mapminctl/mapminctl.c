@@ -393,20 +393,20 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 						printf("echo config %s local.psid-offset %d >/proc/%s\n", 
 							NET_DEVICE_T, 4, PROC_CTL_FILE);
 
-						pc[9] = (arg_publicaddr_val >> 24) & 0xff;
-						pc[10] = (arg_publicaddr_val >> 16) & 0xff;
-						pc[11] = (arg_publicaddr_val >> 8) & 0xff;
-						pc[12] = (arg_publicaddr_val ) & 0xff;
+						pc[9] = (ntohl(arg_publicaddr_val) >> 24) & 0xff;
+						pc[10] = (ntohl(arg_publicaddr_val) >> 16) & 0xff;
+						pc[11] = (ntohl(arg_publicaddr_val) >> 8) & 0xff;
+						pc[12] = (ntohl(arg_publicaddr_val) ) & 0xff;
 
 						pc[13] = (arg_psid >> 8) & 0xff;
 						pc[14] = arg_psid & 0xff;
 					} else {
 						printf("echo config %s local.psid-offset %d >/proc/%s\n", 
 							NET_DEVICE_T, 6, PROC_CTL_FILE);
-						pc[10] = (arg_publicaddr_val >> 24) & 0xff;
-						pc[11] = (arg_publicaddr_val >> 16) & 0xff;
-						pc[12] = (arg_publicaddr_val >> 8) & 0xff;
-						pc[13] = (arg_publicaddr_val ) & 0xff;
+						pc[10] = (ntohl(arg_publicaddr_val) >> 24) & 0xff;
+						pc[11] = (ntohl(arg_publicaddr_val) >> 16) & 0xff;
+						pc[12] = (ntohl(arg_publicaddr_val) >> 8) & 0xff;
+						pc[13] = (ntohl(arg_publicaddr_val) ) & 0xff;
 
 						pc[14] = (arg_psid >> 8) & 0xff;
 						pc[15] = arg_psid & 0xff;
