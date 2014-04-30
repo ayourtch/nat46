@@ -38,6 +38,7 @@ typedef struct {
 
   nat46_xlate_rule_t local_rule;
   nat46_xlate_rule_t remote_rule;
+  int do_atomic_frag;
 } nat46_instance_t;
 
 void nat46_ipv6_input(struct sk_buff *old_skb);

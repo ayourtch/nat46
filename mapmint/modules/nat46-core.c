@@ -179,6 +179,11 @@ int nat46_set_config(nat46_instance_t *nat46, char *buf, int count) {
       if (val) {
         nat46->debug = simple_strtol(val, NULL, 10);
       }
+    } else if (0 == strcmp(arg_name, "make-atomic-frag")) {
+      val = get_next_arg(&tail);
+      if (val) {
+        nat46->do_atomic_frag = simple_strtol(val, NULL, 10);
+      }
     } else if (arg_name == strstr(arg_name, "local.")) {
       arg_name += strlen("local.");
       nat46debug(13, "Setting local xlate parameter");
@@ -211,7 +216,7 @@ char *xlate_style_to_string(nat46_xlate_style_t style) {
  */
 int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
   int ret = 0;
-  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d debug %d";
+  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d debug %d make-atomic-frag %d";
 
   ret = snprintf(buf, count, format,
 		&nat46->local_rule.v4_pref, nat46->local_rule.v4_pref_len, 
@@ -221,7 +226,7 @@ int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
 		&nat46->remote_rule.v4_pref, nat46->remote_rule.v4_pref_len, 
 		&nat46->remote_rule.v6_pref, nat46->remote_rule.v6_pref_len, 
 		xlate_style_to_string(nat46->remote_rule.style), nat46->remote_rule.ea_len, nat46->remote_rule.psid_offset,
-		nat46->debug);
+		nat46->debug, nat46->do_atomic_frag);
   return ret;
 }
 
@@ -1575,7 +1580,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   int tclass = 0;
   int flowlabel = 0;
 
-  int do_atomic_frag = 1;
+  int do_atomic_frag = nat46->do_atomic_frag;
 
   struct ipv6hdr * hdr6;
   struct iphdr * hdr4 = ip_hdr(old_skb);
