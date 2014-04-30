@@ -386,7 +386,9 @@ mapminctl -r -d -P 2610:d0:1208:cafe::/64 -T
 					PROC_CTL_FILE);
 #endif
 				pc[arg_prefix6_len/8] |= 0xff & ((arg_psid << ((8-(arg_prefix6_len+psidbits)%8)) >> 8));
-				pc[arg_prefix6_len/8 + 1] |= (0xff & (arg_psid << (8 - ((arg_prefix6_len + psidbits)% 8)))); 
+				if((arg_prefix6_len + psidbits)/8 - arg_prefix6_len/8 > 0)  {
+				  pc[arg_prefix6_len/8 + 1] |= (0xff & (arg_psid << (8 - ((arg_prefix6_len + psidbits)% 8)))); 
+				}
 				printf("# :::arg_prefix6_len: %d, arg_psid: %d, psidbits: %d\n", arg_prefix6_len, arg_psid, psidbits); 
 
 				if(arg_psid_seen && arg_publicaddr_seen) {
