@@ -43,6 +43,10 @@ define Build/Compile
 	pwd
 endef
 
+define KernelPackage/mapmint/install
+	$(CP) -r ./files/* $(1)/
+endef
+
 $(eval $(call KernelPackage,mapmint))
 
 
