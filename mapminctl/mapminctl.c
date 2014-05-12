@@ -1,7 +1,18 @@
 /*
 *
-* Experiment in emulating the MAP as a 2-step process.  (c) Andrew Yourtchenko <ayourtch@gmail.com>
-* 
+* mapminctl: configure the mapmin using the CLI similar to that of the CERNET package.
+*
+* Copyright (c) 2013-2014 Andrew Yourtchenko <ayourtch@gmail.com>
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License version 2
+* as published by the Free Software Foundation
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+* GNU General Public License for more details.
+*
 * The user-facing code has been partially copypasted from https://github.com/cernet/MAP/blob/master/utils/ivictl.c
 *
 */
