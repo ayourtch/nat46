@@ -84,7 +84,7 @@ static void nat46_netdev_setup(struct net_device *dev)
         dev->type = ARPHRD_NONE;
         dev->hard_header_len = 0;
         dev->addr_len = 0;
-        dev->mtu = ETH_DATA_LEN;
+        dev->mtu = 16384; /* iptables does reassembly. Rather than using ETH_DATA_LEN, let's try to get as much mileage as we can with the Linux stack */
         dev->features = NETIF_F_NETNS_LOCAL;
         dev->flags = IFF_NOARP | IFF_POINTOPOINT;
 }

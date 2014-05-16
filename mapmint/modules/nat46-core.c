@@ -1625,11 +1625,6 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   nat46debug(1, "nat46_ipv4_input packet");
   nat46debug(5, "v4 packet flags: %02x",  IPCB(old_skb)->flags);
 
-  if (ntohs(hdr4->tot_len) > 1480) {
-    // FIXME: need to send Packet Too Big here.
-    goto done; 
-  }
-
   switch(hdr4->protocol) {
     case IPPROTO_TCP: {
       struct tcphdr *th = tcp_hdr(old_skb);
