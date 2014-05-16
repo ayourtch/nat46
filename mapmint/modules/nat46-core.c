@@ -1486,6 +1486,10 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
         nat46debug(0, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP6 are supported.", proto);
         goto done;
     }
+  } else {
+    if(NEXTHDR_ICMP == proto) {
+      proto = IPPROTO_ICMP;
+    }
   }
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC); // other possible option: GFP_ATOMIC
