@@ -1518,6 +1518,7 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
 
   new_skb->dev = old_skb->dev;
   nat46debug(5, "about to send v4 packet, flags: %02x",  IPCB(new_skb)->flags);
+  nat46_netdev_count_xmit(new_skb, old_skb->dev);
   netif_rx(new_skb);
 
   /* TBD: should copy be released here? */
@@ -1689,6 +1690,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
 
   new_skb->dev = old_skb->dev;
 
+  nat46_netdev_count_xmit(new_skb, old_skb->dev);
   netif_rx(new_skb);
 
 done:

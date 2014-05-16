@@ -21,6 +21,7 @@
 #include <net/ip6_route.h>
 #include <linux/inet.h>
 #include <net/ip6_checksum.h>
+#include "nat46-netdev.h"
 
 
 #ifndef IP6_OFFSET
