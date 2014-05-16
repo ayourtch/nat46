@@ -969,7 +969,7 @@ static void nat46_fixup_icmp6_dest_unreach(nat46_instance_t *nat46, struct ipv6h
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
 }
 
-static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb) {
+static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
   /*
    * Packet Too Big (Type 2):  Translate to an ICMPv4 Destination
    * Unreachable (Type 3) with Code 4, and adjust the ICMPv4
@@ -1004,6 +1004,19 @@ static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr
    *            b.  If the packet is greater than 1280 bytes, the translator
    *                SHOULD set the IPv4 DF bit to 1.
    */
+  int len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
+  u16 *pmtu = ((u16 *)icmp6h) + 3; /* IPv4-compatible MTU value is 16 bit */
+  u16 old_csum = icmp6h->icmp6_cksum;
+
+  /* FIXME: get rid of the magic numbers below (diff between IPv6 and IPv4 header size) */
+  if (ntohs(*pmtu) > 20) {
+    icmp6h->icmp6_cksum = csum16_upd(old_csum, *pmtu, htons(ntohs(*pmtu) - 20));
+    *pmtu = htons(ntohs(*pmtu) - 20);
+  }
+
+  len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
+
+  update_icmp6_type_code(nat46, icmp6h, 3, 4);
 
 }
 
@@ -1111,7 +1124,7 @@ static void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, str
         nat46_fixup_icmp6_dest_unreach(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
         break;
       case ICMPV6_PKT_TOOBIG:
-        nat46_fixup_icmp6_pkt_toobig(nat46, ip6h, icmp6h, old_skb);
+        nat46_fixup_icmp6_pkt_toobig(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
         break;
       case ICMPV6_TIME_EXCEED:
         nat46_fixup_icmp6_time_exceed(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
