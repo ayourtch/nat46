@@ -1608,8 +1608,9 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
 
   int tclass = 0;
   int flowlabel = 0;
+  int do_l4_translate = 0;
 
-  int do_atomic_frag = nat46->do_atomic_frag;
+  int add_frag_header = nat46->do_atomic_frag;
 
   struct ipv6hdr * hdr6;
   struct iphdr * hdr4 = ip_hdr(old_skb);
@@ -1624,26 +1625,42 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   }
   nat46debug(1, "nat46_ipv4_input packet");
   nat46debug(5, "v4 packet flags: %02x",  IPCB(old_skb)->flags);
+  if(0 == hdr4->frag_off) {
+    do_l4_translate = 1;
+  } else {
+    add_frag_header = 1;
+    if (0 == (ntohs(hdr4->frag_off) & 0x1FFF)) {
+      do_l4_translate = 1;
+    }
+  }
 
-  switch(hdr4->protocol) {
-    case IPPROTO_TCP: {
-      struct tcphdr *th = tcp_hdr(old_skb);
-      sport = th->source;
-      dport = th->dest;
-      break;
-      }
-    case IPPROTO_UDP: {
-      struct udphdr *udp = udp_hdr(old_skb);
-      sport = udp->source;
-      dport = udp->dest;
-      break;
-      }
-    case IPPROTO_ICMP:
-      sport = dport = nat46_fixup_icmp(nat46, hdr4, old_skb);
-      break;
-    default:
-      nat46debug(3, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP are supported.", hdr4->protocol);
-      goto done;
+  if (do_l4_translate) {
+    switch(hdr4->protocol) {
+      case IPPROTO_TCP: {
+	struct tcphdr *th = tcp_hdr(old_skb);
+	sport = th->source;
+	dport = th->dest;
+	break;
+	}
+      case IPPROTO_UDP: {
+	struct udphdr *udp = udp_hdr(old_skb);
+	sport = udp->source;
+	dport = udp->dest;
+	break;
+	}
+      case IPPROTO_ICMP:
+	sport = dport = nat46_fixup_icmp(nat46, hdr4, old_skb);
+	break;
+      default:
+	nat46debug(3, "[ipv6] Next header: %u. Only TCP, UDP, and ICMP are supported.", hdr4->protocol);
+	goto done;
+    }
+  } else {
+    if (IPPROTO_ICMP == hdr4->protocol) {
+      hdr4->protocol = NEXTHDR_ICMP;
+    }
+    dport = 0;
+    sport = 0;
   }
 
   if(!xlate_v4_to_v6(nat46, &nat46->remote_rule, &hdr4->daddr, v6daddr, dport)) {
@@ -1661,22 +1678,22 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
 
   /* expand header (add 20 extra bytes at the beginning of sk_buff) */
-  pskb_expand_head(new_skb, 20 + (do_atomic_frag?8:0), 0, GFP_ATOMIC);
+  pskb_expand_head(new_skb, 20 + (add_frag_header?8:0), 0, GFP_ATOMIC);
 
-  skb_push(new_skb, sizeof(struct ipv6hdr) - sizeof(struct iphdr) + (do_atomic_frag?8:0)); /* push boundary by extra 20 bytes */
+  skb_push(new_skb, sizeof(struct ipv6hdr) - sizeof(struct iphdr) + (add_frag_header?8:0)); /* push boundary by extra 20 bytes */
 
   skb_reset_network_header(new_skb);
-  skb_set_transport_header(new_skb, 40 + (do_atomic_frag?8:0) ); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
+  skb_set_transport_header(new_skb, 40 + (add_frag_header?8:0) ); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
 
   hdr6 = ipv6_hdr(new_skb);
-  memset(hdr6, 0, sizeof(*hdr6) + (do_atomic_frag?8:0));
+  memset(hdr6, 0, sizeof(*hdr6) + (add_frag_header?8:0));
 
   /* build IPv6 header */
   tclass = 0; /* traffic class */
   *(__be32 *)hdr6 = htonl(0x60000000 | (tclass << 20)) | flowlabel; /* version, priority, flowlabel */
 
   /* IPv6 length is a payload length, IPv4 is hdr+payload */
-  hdr6->payload_len = htons(ntohs(hdr4->tot_len) - sizeof(struct iphdr) + (do_atomic_frag?8:0)); 
+  hdr6->payload_len = htons(ntohs(hdr4->tot_len) - sizeof(struct iphdr) + (add_frag_header?8:0));
   hdr6->nexthdr = hdr4->protocol;
   hdr6->hop_limit = hdr4->ttl;
   memcpy(&hdr6->saddr, v6saddr, 16);
@@ -1686,15 +1703,15 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   // new_skb->mark = old_skb->mark;
   new_skb->protocol = htons(ETH_P_IPV6);
 
-  if (do_atomic_frag) {
+  if (add_frag_header) {
     struct frag_hdr *fh = (struct frag_hdr*)(hdr6 + 1);
-    fh->frag_off = 0;
+    fh->frag_off = htons(((ntohs(hdr4->frag_off) >> 13) & 7) + ((ntohs(hdr4->frag_off) & 0x1FFF) << 3));
     fh->nexthdr = hdr4->protocol;
-    fh->identification = hdr4->id;
+    fh->identification = htonl(ntohs(hdr4->id));
   }
-  ip6_update_csum(new_skb, hdr6, do_atomic_frag);
+  ip6_update_csum(new_skb, hdr6, add_frag_header);
 
-  hdr6->nexthdr = do_atomic_frag ? NEXTHDR_FRAGMENT : hdr4->protocol;
+  hdr6->nexthdr = add_frag_header ? NEXTHDR_FRAGMENT : hdr4->protocol;
 
 
   // FIXME: check if you can not fit the packet into the cached MTU
