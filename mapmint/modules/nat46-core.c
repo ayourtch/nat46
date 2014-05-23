@@ -904,16 +904,6 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
   return (v6_len - 20);
 }
 
-u8 *icmp_rfc4884len_ptr(struct icmphdr *icmph) {
-  u8 *prfc4884len = ((u8 *)(icmph))+5;
-  return prfc4884len;
-}
-
-u8 *icmp6_rfc4884len_ptr(struct icmp6hdr *icmp6h) {
-  u8 *prfc4884len = ((u8 *)(icmp6h))+4;
-  return prfc4884len;
-}
-
 u8 *icmp_parameter_ptr(struct icmphdr *icmph) {
   u8 *icmp_pptr = ((u8 *)(icmph))+4;
   return icmp_pptr;
@@ -953,8 +943,6 @@ static void nat46_fixup_icmp6_dest_unreach(nat46_instance_t *nat46, struct ipv6h
    * Other Code values:  Silently drop.
    */
 
-  u8 *prfc4884len6 = icmp6_rfc4884len_ptr(icmp6h);
-  /* FIXME: http://tools.ietf.org/html/rfc4884 */
   int len;
 
   switch(icmp6h->icmp6_code) {
@@ -1033,8 +1021,6 @@ static void nat46_fixup_icmp6_time_exceed(nat46_instance_t *nat46, struct ipv6hd
    * checksum both to take the type change into account and to
    * exclude the ICMPv6 pseudo-header.  The Code is unchanged.
    */
-  u8 *prfc4884len6 = icmp6_rfc4884len_ptr(icmp6h);
-  /* FIXME: http://tools.ietf.org/html/rfc4884 */
   int len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
 
@@ -1168,8 +1154,6 @@ static uint16_t nat46_fixup_icmp_time_exceeded(nat46_instance_t *nat46, struct i
    * ICMP checksum both to take the type change into account and
    * to include the ICMPv6 pseudo-header.  The Code is unchanged.
    */
-  u8 *prfc4884len4 = icmp_rfc4884len_ptr(icmph);
-  /* FIXME: http://tools.ietf.org/html/rfc4884 */
   icmph->type = 3;
   return 0;
 }
@@ -1215,8 +1199,6 @@ static uint16_t nat46_fixup_icmp_parameterprob(nat46_instance_t *nat46, struct i
    *     |16-19| Destination Address      | 24  | Destination Address      |
    *     +--------------------------------+--------------------------------+
    */
-  u8 *prfc4884len4 = icmp_rfc4884len_ptr(icmph);
-  /* FIXME: http://tools.ietf.org/html/rfc4884 */
   static int ptr4_6[] = { 0, 1, 4, 4, -1, -1, -1, -1, 7, 6, -1, -1, 8, 8, 8, 8, 24, 24, 24, 24, -1 };
   u8 *icmp_pptr = icmp_parameter_ptr(icmph);
   int new_pptr = -1;
@@ -1299,8 +1281,6 @@ static uint16_t nat46_fixup_icmp_dest_unreach(nat46_instance_t *nat46, struct ip
    *    Other Code values:  Silently drop.
    *
    */
-  u8 *prfc4884len4 = icmp_rfc4884len_ptr(icmph);
-  /* FIXME: http://tools.ietf.org/html/rfc4884 */
 
   u16 *pmtu = ((u16 *)icmph) + 3; /* IPv4-compatible MTU value is 16 bit */
 
