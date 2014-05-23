@@ -620,7 +620,7 @@ int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
     bitarray_copy(pipv6, rule->v6_pref_len, v4_lsb_bits_len, pipv4, rule->v4_pref_len);
   }
   /*
-   * FIXME: I do not verify the PSID here. The idea is that if the destination port is incorrect, this
+   * I do not verify the PSID here. The idea is that if the destination port is incorrect, this
    * will be caught in the NAT44 module.
    */
   ret = 1;
@@ -1072,7 +1072,6 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
       if(*pptr6 < sizeof(ptr6_4)/sizeof(ptr6_4[0])) {
         new_pptr = ptr6_4[*pptr6];
         if (new_pptr >= 0) {
-          /* FIXME: store the new parameter pointer into ICMP4 while updating the checksum */
           icmp6h->icmp6_cksum = csum16_upd(icmp6h->icmp6_cksum, (*pptr6 & 0xffff), (new_pptr << 8));
           *pptr4 = 0xff & new_pptr;
         } else {
