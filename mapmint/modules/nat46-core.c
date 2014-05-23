@@ -1302,6 +1302,8 @@ static uint16_t nat46_fixup_icmp_dest_unreach(nat46_instance_t *nat46, struct ip
   u8 *prfc4884len4 = icmp_rfc4884len_ptr(icmph);
   /* FIXME: http://tools.ietf.org/html/rfc4884 */
 
+  u16 *pmtu = ((u16 *)icmph) + 3; /* IPv4-compatible MTU value is 16 bit */
+
   switch (icmph->code) {
     case 0:
     case 1:
@@ -1335,9 +1337,11 @@ static uint16_t nat46_fixup_icmp_dest_unreach(nat46_instance_t *nat46, struct ip
        *     this destination with an IPv6 Fragment Header.
        *
        */
-      /* FIXME: check if MTU < 1280, and change it to 1280 then */
       icmph->type = 2;
       icmph->code = 0;
+      if (ntohs(*pmtu) < 1280) {
+        *pmtu = htons(1280);
+      }
       break;
     case 5:
     case 6:
