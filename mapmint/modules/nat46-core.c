@@ -784,7 +784,7 @@ void fill_v4hdr_from_v6hdr(struct iphdr * iph, struct ipv6hdr *ip6h, __u32 v4sad
   *((__be16 *)iph) = htons((4 << 12) | (5 << 8) | (0x00/*tos*/ & 0xff));
   iph->frag_off = frag_off;
   iph->id = id;
-  iph->tot_len = htons( l3_payload_len + 20 /*sizeof(ipv4hdr)*/ );
+  iph->tot_len = htons( l3_payload_len + IPV4HDRSIZE );
   iph->check = 0;
   iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
 }
@@ -897,11 +897,10 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
     *ul_sum = rechecksum16(iph, 10, *ul_sum);
   }
 
-  /* FIXME: get rid of magic numbers below */
-  memmove(((char *)pv6) + 20, get_next_header_ptr6(ip6h, v6_len), v6_len - 20);
-  memcpy(pv6, iph, 20);
-  *ptailTruncSize += 20;
-  return (v6_len - 20);
+  memmove(((char *)pv6) + IPV4HDRSIZE, get_next_header_ptr6(ip6h, v6_len), v6_len - IPV4HDRSIZE);
+  memcpy(pv6, iph, IPV4HDRSIZE);
+  *ptailTruncSize += IPV6V4HDRDELTA;
+  return (v6_len - IPV6V4HDRDELTA);
 }
 
 u8 *icmp_parameter_ptr(struct icmphdr *icmph) {
@@ -1003,10 +1002,9 @@ static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr
   u16 *pmtu = ((u16 *)icmp6h) + 3; /* IPv4-compatible MTU value is 16 bit */
   u16 old_csum = icmp6h->icmp6_cksum;
 
-  /* FIXME: get rid of the magic numbers below (diff between IPv6 and IPv4 header size) */
-  if (ntohs(*pmtu) > 20) {
-    icmp6h->icmp6_cksum = csum16_upd(old_csum, *pmtu, htons(ntohs(*pmtu) - 20));
-    *pmtu = htons(ntohs(*pmtu) - 20);
+  if (ntohs(*pmtu) > IPV6V4HDRDELTA) {
+    icmp6h->icmp6_cksum = csum16_upd(old_csum, *pmtu, htons(ntohs(*pmtu) - IPV6V4HDRDELTA));
+    *pmtu = htons(ntohs(*pmtu) - IPV6V4HDRDELTA);
   }
 
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
@@ -1511,7 +1509,7 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   skb_put(new_skb, -tailTruncSize);
   l3_infrag_payload_len -= tailTruncSize;
   skb_reset_network_header(new_skb);
-  skb_set_transport_header(new_skb,20); /* transport (TCP/UDP/ICMP/...) header starts after 20 bytes */
+  skb_set_transport_header(new_skb,IPV4HDRSIZE); /* transport (TCP/UDP/ICMP/...) header starts after 20 bytes */
 
   /* build IPv4 header */
   iph = ip_hdr(new_skb);
@@ -1667,12 +1665,12 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
 
   /* expand header (add 20 extra bytes at the beginning of sk_buff) */
-  pskb_expand_head(new_skb, 20 + (add_frag_header?8:0), 0, GFP_ATOMIC);
+  pskb_expand_head(new_skb, IPV6V4HDRDELTA + (add_frag_header?8:0), 0, GFP_ATOMIC);
 
-  skb_push(new_skb, sizeof(struct ipv6hdr) - sizeof(struct iphdr) + (add_frag_header?8:0)); /* push boundary by extra 20 bytes */
+  skb_push(new_skb, IPV6V4HDRDELTA + (add_frag_header?8:0)); /* push boundary by extra 20 bytes */
 
   skb_reset_network_header(new_skb);
-  skb_set_transport_header(new_skb, 40 + (add_frag_header?8:0) ); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
+  skb_set_transport_header(new_skb, IPV6HDRSIZE + (add_frag_header?8:0) ); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
 
   hdr6 = ipv6_hdr(new_skb);
   memset(hdr6, 0, sizeof(*hdr6) + (add_frag_header?8:0));

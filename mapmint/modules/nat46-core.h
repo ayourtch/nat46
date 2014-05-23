@@ -23,6 +23,10 @@
 // #define nat46debug(level, format, ...)
 #define nat46debug(level, format, ...) do { if(nat46->debug >= level) { printk(format "\n", ##__VA_ARGS__); } } while (0)
 
+#define IPV6HDRSIZE 40
+#define IPV4HDRSIZE 20
+#define IPV6V4HDRDELTA (IPV6HDRSIZE - IPV4HDRSIZE)
+
 /* 
  * A generic v4<->v6 translation structure.
  * The currently supported translation styles:
