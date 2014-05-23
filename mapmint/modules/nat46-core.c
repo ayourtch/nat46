@@ -687,7 +687,6 @@ __sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
 __sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, unsigned short len,
                   unsigned char proto, u16 csum) {
   u16 *pdata;
-  int i;
   u16 len0, len1;
 
   pdata = (u16 *)&saddr;
