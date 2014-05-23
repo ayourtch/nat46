@@ -1159,8 +1159,6 @@ int ip6_input_not_interested(nat46_instance_t *nat46, struct ipv6hdr *ip6h, stru
     nat46debug(3, "Source address not unicast");
     return 1;
   }
-  // FIXME: add the verification that the source is within the DMR
-  // FIXME: add the verification that the destination matches our v6 "outside" address
   return 0;
 }
 
