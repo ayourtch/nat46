@@ -599,7 +599,14 @@ int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
     return 0;
   }
   if (rule->v6_pref_len % 8) {
-    /* FIXME: add comparison here for the remaining 1..7 bits, if v6_pref_len % 8 is not zero */
+    uint8_t mask = 0xff << (8 - (rule->v6_pref_len % 8));
+    uint8_t *pa1 = (uint8_t *)pipv6 + (rule->v6_pref_len/8);
+    uint8_t *pa2 = (uint8_t *)&rule->v6_pref + (rule->v6_pref_len/8);
+
+    if ( (*pa1 & mask) != (*pa2 & mask) ) {
+      nat46debug(0, "xlate_map_v6_to_v4: IPv6 address %pI6 outside of MAP domain %pI6/%d (LSB)", pipv6, &rule->v6_pref, rule->v6_pref_len);
+      return 0;
+    }
   }
 
   if (rule->ea_len < (32 - rule->v4_pref_len) ) {
