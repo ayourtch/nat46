@@ -736,17 +736,18 @@ void update_icmp6_type_code(nat46_instance_t *nat46, struct icmp6hdr *icmp6h, u8
   u16 old_tc = *((u16 *)icmp6h);
   u16 new_tc;
   u16 old_csum = icmp6h->icmp6_cksum;
+  u16 new_csum;
   icmp6h->icmp6_type = type;
   icmp6h->icmp6_code = code;
   new_tc = *((u16 *)icmp6h);
   /* https://tools.ietf.org/html/rfc1624 */
-  u16 new_csum = csum16_upd(old_csum, old_tc, new_tc);
+  new_csum = csum16_upd(old_csum, old_tc, new_tc);
   nat46debug(1, "Updating the ICMPv6 type to ICMP type %d and code to %d. Old T/C: %04X, New T/C: %04X, Old CS: %04X, New CS: %04X", type, code, old_tc, new_tc, old_csum, new_csum);
   icmp6h->icmp6_cksum = new_csum;
 }
 
 
-u16 get_next_ip_id() {
+u16 get_next_ip_id(void) {
   static u16 id = 0;
   return id++;
 }
