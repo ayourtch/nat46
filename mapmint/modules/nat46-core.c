@@ -1625,7 +1625,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   }
   nat46debug(1, "nat46_ipv4_input packet");
   nat46debug(5, "v4 packet flags: %02x",  IPCB(old_skb)->flags);
-  if(0 == hdr4->frag_off) {
+  if(0 == (ntohs(hdr4->frag_off) & 0x3FFF) ) {
     do_l4_translate = 1;
   } else {
     add_frag_header = 1;
