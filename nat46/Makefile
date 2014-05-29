@@ -8,14 +8,14 @@
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
-PKG_NAME:=mapmint
+PKG_NAME:=nat46
 PKG_VERSION:=0000000
 
 include $(INCLUDE_DIR)/package.mk
 
-define KernelPackage/mapmint
+define KernelPackage/nat46
   DEPENDS:=+kmod-ipv6
-  TITLE:=MAPMIN MAP-T stateless 46 translation kernel module
+  TITLE:=Stateless NAT46 translation kernel module
   SECTION:=kernel
   SUBMENU:=Network Support
   FILES:=$(PKG_BUILD_DIR)/modules/nat46.ko 
@@ -43,11 +43,11 @@ define Build/Compile
 	pwd
 endef
 
-define KernelPackage/mapmint/install
+define KernelPackage/nat46/install
 	$(CP) -r ./files/* $(1)/
 endef
 
-$(eval $(call KernelPackage,mapmint))
+$(eval $(call KernelPackage,nat46))
 
 
 
