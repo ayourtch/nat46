@@ -1,5 +1,7 @@
 nat46
-======
+=====
+
+This is an OpenWRT feed with a Linux kernel module implementing flexible NAT46.
 
 Compiling
 =========
@@ -24,5 +26,7 @@ Managing
 ========
 
 The management of the NAT46 interfaces is done via the /proc/net/nat46/control file.
+
+For more information about the module, take a look at the nat46/modules/README file.
 
 
