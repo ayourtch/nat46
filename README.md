@@ -13,7 +13,7 @@ then issue:
 
 ```
 ./scripts/feeds update -a
-./scripts/feeds install -a -p mapmin
+./scripts/feeds install -a -p nat46
 ```
 
 This will cause the following to appear in the "make menuconfig":
