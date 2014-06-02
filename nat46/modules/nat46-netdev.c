@@ -83,6 +83,14 @@ void *netdev_nat46_instance(struct net_device *dev) {
 	return priv->nat46;
 }
 
+static void netdev_nat46_set_instance(struct net_device *dev, nat46_instance_t *new_nat46) {
+	nat46_netdev_priv_t *priv = netdev_priv(dev);
+	if(priv->nat46) {
+		release_nat46_instance(priv->nat46);
+	}
+	priv->nat46 = new_nat46;
+}
+
 static void nat46_netdev_setup(struct net_device *dev)
 {
 	nat46_netdev_priv_t *priv = netdev_priv(dev);
@@ -154,13 +162,8 @@ err:
 
 void nat46_netdev_destroy(struct net_device *dev)
 {
-	nat46_instance_t *nat46 = netdev_nat46_instance(dev);
-	if(nat46) {
-		release_nat46_instance(nat46);
-	}
-	
+	netdev_nat46_set_instance(dev, NULL);
         unregister_netdev(dev);
-
         printk("nat46: Destroying nat46 device.\n");
 }
 
@@ -217,6 +220,22 @@ int nat46_destroy(char *devname) {
 	}
 }
 
+int nat46_insert(char *devname, char *buf) {
+	struct net_device *dev = find_dev(devname);
+	int ret = -1;
+	if(dev) {
+		nat46_instance_t *nat46 = netdev_nat46_instance(dev);
+	        nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs+1, nat46, 0, 1);
+		if(nat46_new) {
+			netdev_nat46_set_instance(dev, nat46_new);
+			ret = nat46_set_ipair_config(nat46_new, 0, buf, strlen(buf));
+		} else {
+			printk("Could not insert a new rule on device %s\n", devname);
+		}
+	}
+	return ret;
+}
+
 int nat46_configure(char *devname, char *buf) {
 	struct net_device *dev = find_dev(devname);
 	if(dev) {
@@ -235,11 +254,19 @@ void nat64_show_all_configs(struct seq_file *m) {
 		if(is_nat46(dev)) {
 			nat46_instance_t *nat46 = netdev_nat46_instance(dev);
 			int buflen = 1024;
+			int ipair = -1;
 			char *buf = kmalloc(buflen+1, GFP_KERNEL);
 			seq_printf(m, "add %s\n", dev->name);
 			if(buf) {
-				nat46_get_config(nat46, buf, buflen);
-				seq_printf(m,"config %s %s\n\n", dev->name, buf);
+				for(ipair = 0; ipair < nat46->npairs; ipair++) {
+					nat46_get_ipair_config(nat46, ipair, buf, buflen);
+					if(ipair < nat46->npairs-1) {
+						seq_printf(m,"insert %s %s\n", dev->name, buf);
+					} else {
+						seq_printf(m,"config %s %s\n", dev->name, buf);
+					}
+				}
+				seq_printf(m,"\n");
 				kfree(buf);
 			}
 		}

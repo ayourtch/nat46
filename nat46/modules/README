@@ -18,7 +18,12 @@ echo del <ifname> >/proc/net/nat46/control
 
 echo config <ifname> <cfg-strings> >/proc/net/nat46/control
 	pass the <cfg-strings> data to configuration routine of
-	the respective nat46 interface.
+	the respective nat46 interface. In case multiple rules are
+	present - this command controls the very last one in the ruleset.
+
+echo insert <ifname> <cfg-strings> >/proc/net/nat46/control
+	insert a new rule with the specified config string at the head
+	of the rule set for the device.
 
 CONFIGURING NAT46 DEVICE
 -----------------------

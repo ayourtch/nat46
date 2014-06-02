@@ -106,6 +106,10 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 			devname = get_next_arg(&tail);
 			printk(KERN_INFO "nat46: configure device (%s) with '%s'\n", devname, tail);
 			nat46_configure(devname, tail);
+		} else if (0 == strcmp(arg_name, "insert")) {
+			devname = get_next_arg(&tail);
+			printk(KERN_INFO "nat46: insert new rule into device (%s) with '%s'\n", devname, tail);
+			nat46_insert(devname, tail);
 		}
 	}
 
