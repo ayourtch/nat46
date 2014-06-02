@@ -13,9 +13,13 @@
  *
  */
 
+#define NAT46_DEVICE_SIGNATURE 0x544e36dd
+
 int nat46_create(char *devname);
 int nat46_destroy(char *devname);
 int nat46_configure(char *devname, char *buf);
 void nat46_destroy_all(void);
 void nat64_show_all_configs(struct seq_file *m);
 void nat46_netdev_count_xmit(struct sk_buff *skb, struct net_device *dev);
+void *netdev_nat46_instance(struct net_device *dev);
+

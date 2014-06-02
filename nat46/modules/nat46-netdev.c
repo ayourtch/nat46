@@ -28,6 +28,11 @@
 
 #define NETDEV_DEFAULT_NAME "nat46."
 
+typedef struct {
+  u32 sig;  
+  nat46_instance_t *nat46;
+} nat46_netdev_priv_t;
+
 static u8 netdev_count = 0;
 
 static int nat46_netdev_up(struct net_device *dev);
@@ -73,12 +78,19 @@ void nat46_netdev_count_xmit(struct sk_buff *skb, struct net_device *dev) {
 	dev->stats.tx_bytes += skb->len;
 }
 
+void *netdev_nat46_instance(struct net_device *dev) {
+	nat46_netdev_priv_t *priv = netdev_priv(dev);
+	return priv->nat46;
+}
+
 static void nat46_netdev_setup(struct net_device *dev)
 {
-	nat46_instance_t *nat46 = netdev_priv(dev);
+	nat46_netdev_priv_t *priv = netdev_priv(dev);
+	nat46_instance_t *nat46 = alloc_nat46_instance(1, NULL, -1, -1);
 
-	memset(nat46, 0, sizeof(nat46_instance_t));
-	nat46->sig = NAT46_SIGNATURE;
+	memset(priv, 0, sizeof(*priv));
+	priv->sig = NAT46_DEVICE_SIGNATURE;
+	priv->nat46 = nat46;
 
         dev->netdev_ops = &nat46_netdev_ops;
         dev->type = ARPHRD_NONE;
@@ -142,14 +154,19 @@ err:
 
 void nat46_netdev_destroy(struct net_device *dev)
 {
+	nat46_instance_t *nat46 = netdev_nat46_instance(dev);
+	if(nat46) {
+		release_nat46_instance(nat46);
+	}
+	
         unregister_netdev(dev);
 
         printk("nat46: Destroying nat46 device.\n");
 }
 
 static int is_nat46(struct net_device *dev) {
-	nat46_instance_t *nat46 = netdev_priv(dev);
-	return is_valid_nat46(nat46);
+	nat46_netdev_priv_t *priv = netdev_priv(dev);
+	return (priv && (NAT46_DEVICE_SIGNATURE == priv->sig));
 }
 
 
@@ -203,7 +220,7 @@ int nat46_destroy(char *devname) {
 int nat46_configure(char *devname, char *buf) {
 	struct net_device *dev = find_dev(devname);
 	if(dev) {
-		nat46_instance_t *nat46 = netdev_priv(dev);
+		nat46_instance_t *nat46 = netdev_nat46_instance(dev);
 		return nat46_set_config(nat46, buf, strlen(buf));
 	} else {
 		return -1;
@@ -216,7 +233,7 @@ void nat64_show_all_configs(struct seq_file *m) {
         dev = first_net_device(&init_net);
         while (dev) {
 		if(is_nat46(dev)) {
-			nat46_instance_t *nat46 = netdev_priv(dev);
+			nat46_instance_t *nat46 = netdev_nat46_instance(dev);
 			int buflen = 1024;
 			char *buf = kmalloc(buflen+1, GFP_KERNEL);
 			seq_printf(m, "add %s\n", dev->name);

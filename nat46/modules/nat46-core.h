@@ -40,6 +40,7 @@ typedef enum {
 } nat46_xlate_style_t;
 
 #define NAT46_SIGNATURE 0x544e3634
+#define FREED_NAT46_SIGNATURE 0xdead544e
      
 typedef struct {
   nat46_xlate_style_t style;
@@ -52,25 +53,34 @@ typedef struct {
   int             fmr_flag;
 } nat46_xlate_rule_t;
 
+typedef struct {
+  nat46_xlate_rule_t local;
+  nat46_xlate_rule_t remote;
+  int do_atomic_frag;
+} nat46_xlate_rulepair_t;
 
 typedef struct {
   u32 sig; /* nat46 signature */
+  int refcount;
   int debug;
 
-  nat46_xlate_rule_t local_rule;
-  nat46_xlate_rule_t remote_rule;
-  int do_atomic_frag;
+  int npairs;
+  nat46_xlate_rulepair_t pairs[0]; /* npairs */
 } nat46_instance_t;
 
 void nat46_ipv6_input(struct sk_buff *old_skb);
 void nat46_ipv4_input(struct sk_buff *old_skb);
 
+int nat46_set_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int count);
 int nat46_set_config(nat46_instance_t *nat46, char *buf, int count);
+
+int nat46_get_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int count);
 int nat46_get_config(nat46_instance_t *nat46, char *buf, int count);
 
 char *get_next_arg(char **ptail);
 nat46_instance_t *get_nat46_instance(struct sk_buff *sk);
+
+nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int from_ipair, int to_ipair); 
 void release_nat46_instance(nat46_instance_t *nat46);
-int is_valid_nat46(nat46_instance_t *nat46);
 
 #endif

@@ -18,9 +18,34 @@
 #include "nat46-glue.h"
 #include "nat46-core.h"
 
+int is_valid_nat46(nat46_instance_t *nat46) {
+  return (nat46 && (nat46->sig == NAT46_SIGNATURE));
+}
+
+nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int from_ipair, int to_ipair) {
+  nat46_instance_t *nat46 = kzalloc(sizeof(nat46_instance_t) + npairs*sizeof(nat46_xlate_rulepair_t), GFP_KERNEL);
+  if (!nat46) {
+    printk("make_nat46_instance: can not alloc a nat46 instance with %d pairs\n", npairs);
+    return NULL;
+  }
+  nat46->sig = NAT46_SIGNATURE;
+  nat46->npairs = npairs;
+  nat46->refcount = 1; /* The caller gets the reference */
+  if (old) {
+    nat46->debug = old->debug;
+    for(; (from_ipair > 0) && (to_ipair > 0) && 
+          (from_ipair < old->npairs) && (to_ipair < nat46->npairs); from_ipair++, to_ipair++) {
+      nat46->pairs[to_ipair] = old->pairs[from_ipair];
+    }
+  }
+  return nat46;
+}
+
+
 nat46_instance_t *get_nat46_instance(struct sk_buff *sk) {
-  nat46_instance_t *nat46 = netdev_priv(sk->dev);
+  nat46_instance_t *nat46 = netdev_nat46_instance(sk->dev);
   if (is_valid_nat46(nat46)) {
+    nat46->refcount++;
     return nat46;
   } else {
     printk("Could not find NAT46 instance!");
@@ -29,4 +54,9 @@ nat46_instance_t *get_nat46_instance(struct sk_buff *sk) {
 }
 
 void release_nat46_instance(nat46_instance_t *nat46) {
+  nat46->refcount--;
+  if(0 == nat46->refcount) {
+    nat46->sig = FREED_NAT46_SIGNATURE;
+    kfree(nat46);
+  }
 }
