@@ -158,6 +158,8 @@ int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
     rule->ea_len = simple_strtol(val, NULL, 10);
   } else if (0 == strcmp(arg_name, "psid-offset")) {
     rule->psid_offset = simple_strtol(val, NULL, 10);
+  } else if (0 == strcmp(arg_name, "fmr-flag")) {
+    rule->fmr_flag = simple_strtol(val, NULL, 10);
   } else if (0 == strcmp(arg_name, "style")) {
     if (0 == strcmp("MAP", val)) {
       rule->style = NAT46_XLATE_MAP;
@@ -227,16 +229,20 @@ char *xlate_style_to_string(nat46_xlate_style_t style) {
  */
 int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
   int ret = 0;
-  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d debug %d make-atomic-frag %d";
+  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d local.fmr-flag %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d remote.fmr-flag %d debug %d make-atomic-frag %d";
 
   ret = snprintf(buf, count, format,
 		&nat46->local_rule.v4_pref, nat46->local_rule.v4_pref_len, 
 		&nat46->local_rule.v6_pref, nat46->local_rule.v6_pref_len, 
-		xlate_style_to_string(nat46->local_rule.style), nat46->local_rule.ea_len, nat46->local_rule.psid_offset,
+		xlate_style_to_string(nat46->local_rule.style), 
+		nat46->local_rule.ea_len, nat46->local_rule.psid_offset,
+		nat46->local_rule.fmr_flag,
 		
 		&nat46->remote_rule.v4_pref, nat46->remote_rule.v4_pref_len, 
 		&nat46->remote_rule.v6_pref, nat46->remote_rule.v6_pref_len, 
-		xlate_style_to_string(nat46->remote_rule.style), nat46->remote_rule.ea_len, nat46->remote_rule.psid_offset,
+		xlate_style_to_string(nat46->remote_rule.style), 
+		nat46->remote_rule.ea_len, nat46->remote_rule.psid_offset,
+		nat46->remote_rule.fmr_flag,
 		nat46->debug, nat46->do_atomic_frag);
   return ret;
 }
@@ -1395,6 +1401,7 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   int v6packet_l3size = sizeof(*ip6h);
   int l3_infrag_payload_len = ntohs(ip6h->payload_len);
   int do_l4_translate = 0;
+  int used_fmr = 0;
 
   nat46debug(4, "nat46_ipv6_input packet");
 
@@ -1446,7 +1453,10 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
     nat46debug(0, "[nat46] Could not translate local address v6->v4");
     goto done;
   }
-  if(!xlate_v6_to_v4(nat46, &nat46->remote_rule, &ip6h->saddr, &v4saddr)) {
+  if(nat46->local_rule.fmr_flag && xlate_v6_to_v4(nat46, &nat46->local_rule, &ip6h->saddr, &v4saddr)) {
+    used_fmr = 1;
+  }
+  if(likely(!used_fmr) && !xlate_v6_to_v4(nat46, &nat46->remote_rule, &ip6h->saddr, &v4saddr)) {
     if(proto == NEXTHDR_ICMP) {
       nat46debug(1, "[nat46] Could not translate remote address v6->v4, but protocol is ICMP6, so using our local addr as a stub");
       v4saddr = v4daddr;
@@ -1595,6 +1605,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   int tclass = 0;
   int flowlabel = 0;
   int do_l4_translate = 0;
+  int used_fmr = 0;
 
   int add_frag_header = nat46->do_atomic_frag;
 
@@ -1649,7 +1660,10 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
     sport = 0;
   }
 
-  if(!xlate_v4_to_v6(nat46, &nat46->remote_rule, &hdr4->daddr, v6daddr, dport)) {
+  if(nat46->local_rule.fmr_flag && xlate_v4_to_v6(nat46, &nat46->local_rule, &hdr4->daddr, v6daddr, dport)) {
+    used_fmr = 1;
+  }
+  if(likely(!used_fmr) && !xlate_v4_to_v6(nat46, &nat46->remote_rule, &hdr4->daddr, v6daddr, dport))  {
     nat46debug(0, "[nat46] Could not translate remote address v4->v6");
     goto done;
   }

@@ -49,6 +49,7 @@ typedef struct {
   int             v4_pref_len;
   int		  ea_len;
   int             psid_offset;
+  int             fmr_flag;
 } nat46_xlate_rule_t;
 
 

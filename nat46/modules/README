@@ -54,6 +54,7 @@ this rule:
 
 	<rule>.ea-len
 	<rule>.psid-offset
+	<rule>.fmr-flag
 		ignored in this translation style
 
 	NB: in the future this translation mechanism may be extended to allow 1:1
@@ -74,6 +75,7 @@ this rule:
 
 	<rule>.ea-len
 	<rule>.psid-offset
+	<rule>.fmr-flag
 		ignored in this translation style
 
 <rule>.style MAP
@@ -93,6 +95,12 @@ this rule:
 	<rule>.psid-offset
 		this parameter specifies how many bits to the right to shift
 		the bits of the psid within the port value.
+
+	<rule>.fmr-flag
+		this parameter allows the "local" rule to be tried as a "remote" rule 
+		as well. In MAP terminology, this allows to implement FMR rule by just
+		setting this flag. This flag is used only on the "local" side, and is
+		ignored for the "remote" side.
 
 
 CODE STRUCTURE
