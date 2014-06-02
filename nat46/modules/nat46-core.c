@@ -827,6 +827,7 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
   u16 ipid = 0;
   u16 ipflags = htons(IP_DF);
   int infrag_payload_len = ntohs(ip6h->payload_len);
+  int used_fmr = 0;
 
 
   /*
@@ -836,7 +837,10 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
   if(!xlate_v6_to_v4(nat46, &nat46->local_rule, &ip6h->saddr, &v4saddr)) {
     nat46debug(0, "[nat46] Could not translate inner source address v6->v4");
   }
-  if(!xlate_v6_to_v4(nat46, &nat46->remote_rule, &ip6h->daddr, &v4daddr)) {
+  if(nat46->local_rule.fmr_flag && xlate_v6_to_v4(nat46, &nat46->local_rule, &ip6h->daddr, &v4daddr)) {
+    used_fmr = 1;
+  }
+  if(likely(!used_fmr) && !xlate_v6_to_v4(nat46, &nat46->remote_rule, &ip6h->daddr, &v4daddr)) {
     nat46debug(0, "[nat46] Could not translate inner dest address v6->v4");
   }
 
