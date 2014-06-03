@@ -196,11 +196,6 @@ int nat46_set_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int co
       if (val) {
         nat46->debug = simple_strtol(val, NULL, 10);
       }
-    } else if (0 == strcmp(arg_name, "make-atomic-frag")) {
-      val = get_next_arg(&tail);
-      if (val) {
-        apair->do_atomic_frag = simple_strtol(val, NULL, 10);
-      }
     } else if (arg_name == strstr(arg_name, "local.")) {
       arg_name += strlen("local.");
       nat46debug(13, "Setting local xlate parameter");
@@ -242,7 +237,7 @@ char *xlate_style_to_string(nat46_xlate_style_t style) {
 int nat46_get_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int count) {
   int ret = 0;
   nat46_xlate_rulepair_t *apair = NULL;
-  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d debug %d make-atomic-frag %d";
+  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d debug %d";
 
   if ((ipair < 0) || (ipair >= nat46->npairs)) {
     return ret;
@@ -260,7 +255,7 @@ int nat46_get_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int co
 		xlate_style_to_string(apair->remote.style), 
 		apair->remote.ea_len, apair->remote.psid_offset,
 
-		nat46->debug, apair->do_atomic_frag);
+		nat46->debug);
   return ret;
 }
 
@@ -535,7 +530,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   /* check that the ipv4 address is within the IPv4 map domain and reject if not */
 
   if ( (ntohl(*pv4u32) & (0xffffffff << v4_lsb_bits_len)) != ntohl(rule->v4_pref) ) {
-    nat46debug(0, "xlate_map_v4_to_v6: IPv4 address %pI4 outside of MAP domain %pI4/%d", pipv4, &rule->v4_pref, rule->v4_pref_len);
+    nat46debug(5, "xlate_map_v4_to_v6: IPv4 address %pI4 outside of MAP domain %pI4/%d", pipv4, &rule->v4_pref, rule->v4_pref_len);
     return 0;
   }
 
@@ -628,7 +623,7 @@ int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
 
   if (memcmp(pipv6, &rule->v6_pref, rule->v6_pref_len/8)) {
     /* address not within the MAP IPv6 prefix */
-    nat46debug(0, "xlate_map_v6_to_v4: IPv6 address %pI6 outside of MAP domain %pI6/%d", pipv6, &rule->v6_pref, rule->v6_pref_len);
+    nat46debug(5, "xlate_map_v6_to_v4: IPv6 address %pI6 outside of MAP domain %pI6/%d", pipv6, &rule->v6_pref, rule->v6_pref_len);
     return 0;
   }
   if (rule->v6_pref_len % 8) {
@@ -637,7 +632,7 @@ int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
     uint8_t *pa2 = (uint8_t *)&rule->v6_pref + (rule->v6_pref_len/8);
 
     if ( (*pa1 & mask) != (*pa2 & mask) ) {
-      nat46debug(0, "xlate_map_v6_to_v4: IPv6 address %pI6 outside of MAP domain %pI6/%d (LSB)", pipv6, &rule->v6_pref, rule->v6_pref_len);
+      nat46debug(5, "xlate_map_v6_to_v4: IPv6 address %pI6 outside of MAP domain %pI6/%d (LSB)", pipv6, &rule->v6_pref, rule->v6_pref_len);
       return 0;
     }
   }
@@ -840,30 +835,31 @@ u16 rechecksum16(void *p, int count, u16 csum) {
   return csum;
 }
 
-int pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, __u32 *pv4saddr, __u32 *pv4daddr) {
+void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, __u32 *pv4saddr, __u32 *pv4daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
-  int ret = -1;
+  int xlate_src = -1;
+  int xlate_dst = -1;
 
   for(ipair = 0; ipair < nat46->npairs; ipair++) {
     apair = &nat46->pairs[ipair];
 
-    if(!xlate_v6_to_v4(nat46, &apair->local, &ip6h->saddr, pv4saddr)) {
-      nat46debug(5, "[nat46payload] Could not translate inner source address v6->v4, ipair %d", ipair);
-      continue;
+    if(-1 == xlate_dst) { 
+      if(xlate_v6_to_v4(nat46, &apair->remote, &ip6h->daddr, pv4daddr)) {
+        xlate_dst = ipair;
+      }
     }
-    if(!xlate_v6_to_v4(nat46, &apair->remote, &ip6h->daddr, pv4daddr)) {
-      nat46debug(5, "[nat46payload] Could not translate inner dest address v6->v4, ipair %d", ipair);
-      continue;
+    if(-1 == xlate_src) {
+      if(xlate_v6_to_v4(nat46, &apair->local, &ip6h->saddr, pv4saddr)) {
+        xlate_src = ipair;
+      }
     }
-    /* If we are here, we have found a translation */
-    ret = ipair;
-    break;
+    if((xlate_src >= 0) && (xlate_dst >= 0)) {
+      /* we did manage to translate it */
+      break;
+    }
   }
-  if(ret < 0) { 
-    nat46debug(1, "[nat46payload] Could not find a translation pair v6->v4 src %pI6c dst %pI6c", &ip6h->saddr, &ip6h->daddr);
-  }
-  return ret;
+  nat46debug(5, "[nat46payload] xlate results: src %d dst %d", xlate_src, xlate_dst);
 }
 
 /*
@@ -1436,32 +1432,41 @@ static uint16_t nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, str
 int pairs_xlate_v6_to_v4_outer(nat46_instance_t *nat46, struct ipv6hdr *ip6h, uint16_t proto, __u32 *pv4saddr, __u32 *pv4daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
-  int ret = -1;
+  int xlate_src = -1;
+  int xlate_dst = -1;
 
   for(ipair = 0; ipair < nat46->npairs; ipair++) {
     apair = &nat46->pairs[ipair];
 
-    if(!xlate_v6_to_v4(nat46, &apair->local, &ip6h->daddr, pv4daddr)) {
-      nat46debug(5, "[nat46] Could not translate inner dest address v6->v4, ipair %d", ipair);
-      continue;
-    }
-    if(!xlate_v6_to_v4(nat46, &apair->remote, &ip6h->saddr, pv4saddr)) {
-      if(proto == NEXTHDR_ICMP) {
-        nat46debug(1, "[nat46] Could not translate remote address v6->v4, ipair %d, but for ICMP6 using own address", ipair);
-        *pv4saddr = *pv4daddr;
-      } else {
-        nat46debug(5, "[nat46] Could not translate remote address v6->v4, ipair %d", ipair);
-        continue;
+    if(-1 == xlate_dst) { 
+      if (xlate_v6_to_v4(nat46, &apair->local, &ip6h->daddr, pv4daddr)) {
+        xlate_dst = ipair;
       }
     }
-    /* If we are here, we have found a translation */
-    ret = ipair;
-    break;
+    if(-1 == xlate_src) {
+      if (xlate_v6_to_v4(nat46, &apair->remote, &ip6h->saddr, pv4saddr)) {
+        xlate_src = ipair;
+      }
+    }
+    if( (xlate_src >= 0) && (xlate_dst >= 0) ) {
+      break;
+    }
   }
-  if(ret < 0) {
+  if (xlate_dst >= 0) {
+    if (xlate_src < 0) {
+      if(proto == NEXTHDR_ICMP) {
+        nat46debug(1, "[nat46] Could not translate remote address v6->v4, ipair %d, for ICMP6 use dest addr", ipair);
+        *pv4saddr = *pv4daddr;
+        xlate_src = xlate_dst;
+      } else {
+        nat46debug(5, "[nat46] Could not translate remote address v6->v4, ipair %d", ipair);
+      }
+    }
+  } else {
     nat46debug(1, "[nat46] Could not find a translation pair v6->v4 src %pI6c dst %pI6c", &ip6h->saddr, &ip6h->daddr);
-  }
-  return ret;
+  } 
+  nat46debug(5, "[nat46] pairs_xlate_v6_to_v4_outer result src %d dst %d", xlate_src, xlate_dst);
+  return ( (xlate_src >= 0) && (xlate_dst >= 0) );
 }
 
 
@@ -1480,7 +1485,6 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   int v6packet_l3size = sizeof(*ip6h);
   int l3_infrag_payload_len = ntohs(ip6h->payload_len);
   int do_l4_translate = 0;
-  int ipair = -1;
 
   nat46debug(4, "nat46_ipv6_input packet");
 
@@ -1529,8 +1533,7 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   }
  
 
-  ipair = pairs_xlate_v6_to_v4_outer(nat46, ip6h, proto, &v4saddr, &v4daddr);
-  if (ipair < 0) {
+  if(!pairs_xlate_v6_to_v4_outer(nat46, ip6h, proto, &v4saddr, &v4daddr)) {
     goto done;
   }
  
@@ -1669,24 +1672,31 @@ int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, struct 
 int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr4, int sport, int dport, void *v6saddr, void *v6daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
-  int ret = -1;
+  int xlate_src = -1;
+  int xlate_dst = -1;
+  int ret = 0;
 
   for(ipair = 0; ipair < nat46->npairs; ipair++) {
     apair = &nat46->pairs[ipair];
 
-    if(!xlate_v4_to_v6(nat46, &apair->local, &hdr4->saddr, v6saddr, sport)) {
-      nat46debug(5, "[nat46] Could not translate local address v4->v6, ipair %d", ipair);
-      continue;
+    if(-1 == xlate_src) {
+      if(xlate_v4_to_v6(nat46, &apair->local, &hdr4->saddr, v6saddr, sport)) {
+        xlate_src = ipair;
+      }
     }
-    if(!xlate_v4_to_v6(nat46, &apair->remote, &hdr4->daddr, v6daddr, dport)) {
-      nat46debug(5, "[nat46] Could not translate remote address v4->v6, ipair %d", ipair);
-      continue;
+    if(-1 == xlate_dst) {
+      if(xlate_v4_to_v6(nat46, &apair->remote, &hdr4->daddr, v6daddr, dport)) {
+        xlate_dst = ipair;
+      }
     }
-    /* If we are here, we have found a translation */
-    ret = ipair;
-    break;
+    if( (xlate_src >= 0) && (xlate_dst >= 0) ) {
+      break;
+    }
   }
-  if(ret < 0) {
+  nat46debug(5, "[nat46] pairs_xlate_v4_to_v6_outer result: src %d dst %d", xlate_src, xlate_dst);
+  if ( (xlate_src >= 0) && (xlate_dst >= 0) ) {
+    ret = 1;
+  } else {
     nat46debug(1, "[nat46] Could not find a translation pair v4->v6");
   }
   return ret;
@@ -1703,7 +1713,6 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   int do_l4_translate = 0;
 
   int add_frag_header = 0; 
-  int ipair = -1;
 
   struct ipv6hdr * hdr6;
   struct iphdr * hdr4 = ip_hdr(old_skb);
@@ -1756,13 +1765,9 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
     sport = 0;
   }
 
-  ipair = pairs_xlate_v4_to_v6_outer(nat46, hdr4, sport, dport, v6saddr, v6daddr);
-  if(ipair < 0) {
+  if(!pairs_xlate_v4_to_v6_outer(nat46, hdr4, sport, dport, v6saddr, v6daddr)) {
     nat46debug(0, "[nat46] Could not translate v4->v6");
     goto done;
-  }
-  if (nat46->pairs[ipair].do_atomic_frag) {
-    add_frag_header = 1;
   }
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC);

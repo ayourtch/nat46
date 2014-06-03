@@ -56,7 +56,6 @@ typedef struct {
 typedef struct {
   nat46_xlate_rule_t local;
   nat46_xlate_rule_t remote;
-  int do_atomic_frag;
 } nat46_xlate_rulepair_t;
 
 typedef struct {
