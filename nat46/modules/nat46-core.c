@@ -835,6 +835,11 @@ u16 rechecksum16(void *p, int count, u16 csum) {
   return csum;
 }
 
+/* Last rule in group must not have "none" as either source or destination */
+int is_last_pair_in_group(nat46_xlate_rulepair_t *apair) {
+  return ( (apair->local.style != NAT46_XLATE_NONE) && (apair->remote.style != NAT46_XLATE_NONE) );
+}
+
 void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, __u32 *pv4saddr, __u32 *pv4daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
@@ -857,6 +862,12 @@ void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, _
     if((xlate_src >= 0) && (xlate_dst >= 0)) {
       /* we did manage to translate it */
       break;
+    } else {
+      /* We did not match fully and there are more rules */
+      if((ipair+1 < nat46->npairs) && is_last_pair_in_group(apair)) {
+        xlate_src = -1;
+        xlate_dst = -1;
+      }
     }
   }
   nat46debug(5, "[nat46payload] xlate results: src %d dst %d", xlate_src, xlate_dst);
@@ -1450,6 +1461,12 @@ int pairs_xlate_v6_to_v4_outer(nat46_instance_t *nat46, struct ipv6hdr *ip6h, ui
     }
     if( (xlate_src >= 0) && (xlate_dst >= 0) ) {
       break;
+    } else {
+      /* We did not match fully and there are more rules */
+      if((ipair+1 < nat46->npairs) && is_last_pair_in_group(apair)) {
+        xlate_src = -1;
+        xlate_dst = -1;
+      }
     }
   }
   if (xlate_dst >= 0) {
@@ -1691,6 +1708,12 @@ int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr4, int 
     }
     if( (xlate_src >= 0) && (xlate_dst >= 0) ) {
       break;
+    } else {
+      /* We did not match fully and there are more rules */
+      if((ipair+1 < nat46->npairs) && is_last_pair_in_group(apair)) {
+        xlate_src = -1;
+        xlate_dst = -1;
+      }
     }
   }
   nat46debug(5, "[nat46] pairs_xlate_v4_to_v6_outer result: src %d dst %d", xlate_src, xlate_dst);
