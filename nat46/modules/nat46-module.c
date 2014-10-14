@@ -130,7 +130,7 @@ static const struct file_operations nat46_proc_fops = {
 int create_nat46_proc_entry(void) {
         nat46_proc_parent = proc_mkdir(NAT46_PROC_NAME, init_net.proc_net);
 	if (nat46_proc_parent) {
-        	nat46_proc_entry = proc_create(NAT46_CONTROL_PROC_NAME, 0666, nat46_proc_parent, &nat46_proc_fops );
+        	nat46_proc_entry = proc_create(NAT46_CONTROL_PROC_NAME, 0644, nat46_proc_parent, &nat46_proc_fops );
         	if(!nat46_proc_entry) {
                 	printk(KERN_INFO "Error creating proc entry");
                 	return -ENOMEM; 
