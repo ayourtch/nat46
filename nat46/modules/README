@@ -10,18 +10,18 @@ by using routing to direct the packets to the appropriate interface.
 Upon loading, it creates a file /proc/net/nat46/control, which is used 
 to interact with it.
 
-echo add <ifname> >/proc/net/nat46/control
+echo add <ifname> | sudo tee /proc/net/nat46/control
 	create a new nat46 interface with a specified name
 
-echo del <ifname> >/proc/net/nat46/control
+echo del <ifname> | sudo tee /proc/net/nat46/control
 	delete the existing nat46 interface with a specified name
 
-echo config <ifname> <cfg-strings> >/proc/net/nat46/control
+echo config <ifname> <cfg-strings> | sudo tee /proc/net/nat46/control
 	pass the <cfg-strings> data to configuration routine of
 	the respective nat46 interface. In case multiple rules are
 	present - this command controls the very last one in the ruleset.
 
-echo insert <ifname> <cfg-strings> >/proc/net/nat46/control
+echo insert <ifname> <cfg-strings> | sudo tee /proc/net/nat46/control
 	insert a new rule with the specified config string at the head
 	of the rule set for the device.
 
