@@ -46,6 +46,9 @@
 #define NAT46_PROC_NAME	"nat46"
 #define NAT46_CONTROL_PROC_NAME "control"
 
+#ifndef NAT46_VERSION
+#define NAT46_VERSION __DATE__ " " __TIME__
+#endif
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>");
@@ -144,7 +147,7 @@ static int __init nat46_init(void)
 {
         int ret = 0;
 
-        printk("nat46: module (compiled %s %s) loaded.\n", __DATE__, __TIME__);
+        printk("nat46: module (version %s) loaded.\n", NAT46_VERSION);
 	ret = create_nat46_proc_entry();
 	if(ret) {
 		goto error;
