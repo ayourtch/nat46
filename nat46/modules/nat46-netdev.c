@@ -23,6 +23,7 @@
 #include <net/ip6_fib.h>
 #include <net/ip6_route.h>
 #include <net/ipv6.h>
+#include <linux/version.h>
 #include "nat46-core.h"
 #include "nat46-module.h"
 
@@ -133,7 +134,11 @@ int nat46_netdev_create(char *basename, struct net_device **dev)
 		strcpy(devname, basename);
 	}
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(3,17,0)
         *dev = alloc_netdev(sizeof(nat46_instance_t), devname, nat46_netdev_setup);
+#else
+        *dev = alloc_netdev(sizeof(nat46_instance_t), devname, NET_NAME_UNKNOWN, nat46_netdev_setup);
+#endif
         if (!*dev) {
                 printk("nat46: Unable to allocate nat46 device '%s'.\n", devname);
 		ret = -ENOMEM;
