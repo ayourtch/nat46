@@ -74,6 +74,18 @@ static int nat46_proc_open(struct inode *inode, struct file *file)
         return single_open(file, nat46_proc_show, NULL);
 }
 
+static char *get_devname(char **ptail)
+{
+	const int maxlen = IFNAMSIZ-1;
+	char *devname = get_next_arg(ptail);
+	if(strlen(devname) > maxlen) {
+		printk(KERN_INFO "nat46: '%s' is "
+			"longer than %d chars, truncating\n", devname, maxlen);
+		devname[maxlen] = 0;
+	}
+	return devname;
+}
+
 static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
                               size_t count, loff_t *ppos)
 {
@@ -98,19 +110,19 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 
         while (NULL != (arg_name = get_next_arg(&tail))) {
 		if (0 == strcmp(arg_name, "add")) {
-			devname = get_next_arg(&tail);
+			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: adding device (%s)\n", devname);
 			nat46_create(devname);
 		} else if (0 == strcmp(arg_name, "del")) {
-			devname = get_next_arg(&tail);
+			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: deleting device (%s)\n", devname);
 			nat46_destroy(devname);
 		} else if (0 == strcmp(arg_name, "config")) {
-			devname = get_next_arg(&tail);
+			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: configure device (%s) with '%s'\n", devname, tail);
 			nat46_configure(devname, tail);
 		} else if (0 == strcmp(arg_name, "insert")) {
-			devname = get_next_arg(&tail);
+			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: insert new rule into device (%s) with '%s'\n", devname, tail);
 			nat46_insert(devname, tail);
 		}
