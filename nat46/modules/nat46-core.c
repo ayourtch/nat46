@@ -707,7 +707,9 @@ __sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
   u32 s;
   csum = ntohs(~csum);
   s = (u32)csum + ntohs(~old) + ntohs(new);
-  return htons(~ (u16)( ((s >> 16) & 0xffff) + (s & 0xffff)));
+  s = ((s >> 16) & 0xffff) + (s & 0xffff);
+  s += ((s >> 16) & 0xffff);
+  return htons((u16)(~s));
 }
 
 /* Add the TCP/UDP pseudoheader, basing on the existing checksum */
@@ -1591,15 +1593,13 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   }
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC); // other possible option: GFP_ATOMIC
+  if (!new_skb) {
+    nat46debug(0, "[nat46] Could not copy v6 skb");
+    goto done;
+  }
   
-
   /* Remove any debris in the socket control block */
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
-  new_skb->nf_trace = 0;
-  new_skb->peeked = 0;
-  new_skb->nfctinfo = 0;
-  new_skb->ipvs_property = 0;
-  new_skb->nfct = NULL;
 
   /* modify packet: actual IPv6->IPv4 transformation */
   truncSize = v6packet_l3size - sizeof(struct iphdr); /* chop first 20 bytes */
@@ -1618,7 +1618,6 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
     nat46debug(0, "Too big IP len: %d", ntohs(iph->tot_len));
   }
 
-  new_skb->dev = old_skb->dev;
   nat46debug(5, "about to send v4 packet, flags: %02x",  IPCB(new_skb)->flags);
   nat46_netdev_count_xmit(new_skb, old_skb->dev);
   netif_rx(new_skb);
@@ -1794,6 +1793,10 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   }
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC);
+  if (!new_skb) {
+    nat46debug(0, "[nat46] Could not copy v4 skb");
+    goto done;
+  }
 
   /* Remove any debris in the socket control block */
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
@@ -1820,8 +1823,6 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   memcpy(&hdr6->saddr, v6saddr, 16);
   memcpy(&hdr6->daddr, v6daddr, 16);
 
-  new_skb->priority = old_skb->priority;
-  // new_skb->mark = old_skb->mark;
   new_skb->protocol = htons(ETH_P_IPV6);
 
   if (add_frag_header) {
@@ -1837,8 +1838,6 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
 
   // FIXME: check if you can not fit the packet into the cached MTU
   // if (dst_mtu(skb_dst(new_skb))==0) { }
-
-  new_skb->dev = old_skb->dev;
 
   nat46_netdev_count_xmit(new_skb, old_skb->dev);
   netif_rx(new_skb);
