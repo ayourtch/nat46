@@ -707,7 +707,9 @@ __sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
   u32 s;
   csum = ntohs(~csum);
   s = (u32)csum + ntohs(~old) + ntohs(new);
-  return htons(~ (u16)( ((s >> 16) & 0xffff) + (s & 0xffff)));
+  s = ((s >> 16) & 0xffff) + (s & 0xffff);
+  s += ((s >> 16) & 0xffff);
+  return htons((u16)(~s));
 }
 
 /* Add the TCP/UDP pseudoheader, basing on the existing checksum */
