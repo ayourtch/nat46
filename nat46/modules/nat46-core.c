@@ -1600,6 +1600,8 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   
   /* Remove any debris in the socket control block */
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
+  /* Remove netfilter references to IPv6 packet, new netfilter references will be created based on IPv4 packet */
+  nf_reset(new_skb);
 
   /* modify packet: actual IPv6->IPv4 transformation */
   truncSize = v6packet_l3size - sizeof(struct iphdr); /* chop first 20 bytes */
@@ -1800,6 +1802,8 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
 
   /* Remove any debris in the socket control block */
   memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
+  /* Remove netfilter references to IPv4 packet, new netfilter references will be created based on IPv6 packet */
+  nf_reset(new_skb);
 
   /* expand header (add 20 extra bytes at the beginning of sk_buff) */
   pskb_expand_head(new_skb, IPV6V4HDRDELTA + (add_frag_header?8:0), 0, GFP_ATOMIC);
