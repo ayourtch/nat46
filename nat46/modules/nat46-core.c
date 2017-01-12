@@ -615,8 +615,6 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
 }
 
 int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, int version) {
-  int ret = 0;
-
   uint8_t psid_bits_len;
   uint8_t v4_lsb_bits_len = 32 - rule->v4_pref_len;
 
@@ -651,8 +649,7 @@ int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
    * I do not verify the PSID here. The idea is that if the destination port is incorrect, this
    * will be caught in the NAT44 module.
    */
-  ret = 1;
-  return ret;
+  return 1;
 }
 
 int xlate_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t l4id) {
@@ -1692,7 +1689,6 @@ int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr4, int 
   nat46_xlate_rulepair_t *apair = NULL;
   int xlate_src = -1;
   int xlate_dst = -1;
-  int ret = 0;
 
   for(ipair = 0; ipair < nat46->npairs; ipair++) {
     apair = &nat46->pairs[ipair];
@@ -1719,11 +1715,12 @@ int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr4, int 
   }
   nat46debug(5, "[nat46] pairs_xlate_v4_to_v6_outer result: src %d dst %d", xlate_src, xlate_dst);
   if ( (xlate_src >= 0) && (xlate_dst >= 0) ) {
-    ret = 1;
-  } else {
-    nat46debug(1, "[nat46] Could not find a translation pair v4->v6");
+    return 1;
   }
-  return ret;
+
+  nat46debug(1, "[nat46] Could not find a translation pair v4->v6");
+
+  return 0;
 }
 
 
