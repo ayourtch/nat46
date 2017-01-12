@@ -30,7 +30,7 @@
 #define NETDEV_DEFAULT_NAME "nat46."
 
 typedef struct {
-  u32 sig;  
+  u32 sig;
   nat46_instance_t *nat46;
 } nat46_netdev_priv_t;
 
@@ -43,21 +43,21 @@ static netdev_tx_t nat46_netdev_xmit(struct sk_buff *skb, struct net_device *dev
 
 
 static const struct net_device_ops nat46_netdev_ops = {
-        .ndo_open       = nat46_netdev_up,      /* Called at ifconfig nat46 up */
-        .ndo_stop       = nat46_netdev_down,    /* Called at ifconfig nat46 down */
-        .ndo_start_xmit = nat46_netdev_xmit,    /* REQUIRED, must return NETDEV_TX_OK */
+	.ndo_open       = nat46_netdev_up,      /* Called at ifconfig nat46 up */
+	.ndo_stop       = nat46_netdev_down,    /* Called at ifconfig nat46 down */
+	.ndo_start_xmit = nat46_netdev_xmit,    /* REQUIRED, must return NETDEV_TX_OK */
 };
 
 static int nat46_netdev_up(struct net_device *dev)
 {
-        netif_start_queue(dev);
-        return 0;
+	netif_start_queue(dev);
+	return 0;
 }
 
 static int nat46_netdev_down(struct net_device *dev)
 {
-        netif_stop_queue(dev);
-        return 0;
+	netif_stop_queue(dev);
+	return 0;
 }
 
 static netdev_tx_t nat46_netdev_xmit(struct sk_buff *skb, struct net_device *dev)
@@ -65,13 +65,13 @@ static netdev_tx_t nat46_netdev_xmit(struct sk_buff *skb, struct net_device *dev
 	dev->stats.rx_packets++;
 	dev->stats.rx_bytes += skb->len;
 	if(ETH_P_IP == ntohs(skb->protocol)) {
-               	nat46_ipv4_input(skb); 
-        }
+		nat46_ipv4_input(skb);
+	}
 	if(ETH_P_IPV6 == ntohs(skb->protocol)) {
-               	nat46_ipv6_input(skb); 
-        }
-        kfree_skb(skb);
-        return NETDEV_TX_OK;
+		nat46_ipv6_input(skb);
+	}
+	kfree_skb(skb);
+	return NETDEV_TX_OK;
 }
 
 void nat46_netdev_count_xmit(struct sk_buff *skb, struct net_device *dev) {
@@ -101,22 +101,22 @@ static void nat46_netdev_setup(struct net_device *dev)
 	priv->sig = NAT46_DEVICE_SIGNATURE;
 	priv->nat46 = nat46;
 
-        dev->netdev_ops = &nat46_netdev_ops;
-        dev->type = ARPHRD_NONE;
-        dev->hard_header_len = 0;
-        dev->addr_len = 0;
-        dev->mtu = 16384; /* iptables does reassembly. Rather than using ETH_DATA_LEN, let's try to get as much mileage as we can with the Linux stack */
-        dev->features = NETIF_F_NETNS_LOCAL;
-        dev->flags = IFF_NOARP | IFF_POINTOPOINT;
+	dev->netdev_ops = &nat46_netdev_ops;
+	dev->type = ARPHRD_NONE;
+	dev->hard_header_len = 0;
+	dev->addr_len = 0;
+	dev->mtu = 16384; /* iptables does reassembly. Rather than using ETH_DATA_LEN, let's try to get as much mileage as we can with the Linux stack */
+	dev->features = NETIF_F_NETNS_LOCAL;
+	dev->flags = IFF_NOARP | IFF_POINTOPOINT;
 }
 
 int nat46_netdev_create(char *basename, struct net_device **dev)
 {
-        int ret = 0;
+	int ret = 0;
 	char *devname = NULL;
 	int automatic_name = 0;
 
-        if (basename && strcmp("", basename)) {
+	if (basename && strcmp("", basename)) {
 		devname = kmalloc(strlen(basename)+1, GFP_KERNEL);
 	} else {
 		devname = kmalloc(strlen(NETDEV_DEFAULT_NAME)+3+1, GFP_KERNEL);
@@ -135,41 +135,41 @@ int nat46_netdev_create(char *basename, struct net_device **dev)
 	}
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(3,17,0)
-        *dev = alloc_netdev(sizeof(nat46_instance_t), devname, nat46_netdev_setup);
+	*dev = alloc_netdev(sizeof(nat46_instance_t), devname, nat46_netdev_setup);
 #else
-        *dev = alloc_netdev(sizeof(nat46_instance_t), devname, NET_NAME_UNKNOWN, nat46_netdev_setup);
+	*dev = alloc_netdev(sizeof(nat46_instance_t), devname, NET_NAME_UNKNOWN, nat46_netdev_setup);
 #endif
-        if (!*dev) {
-                printk("nat46: Unable to allocate nat46 device '%s'.\n", devname);
+	if (!*dev) {
+		printk("nat46: Unable to allocate nat46 device '%s'.\n", devname);
 		ret = -ENOMEM;
 		goto err_alloc_dev;
-        }
+	}
 
-        ret = register_netdev(*dev);
-        if(ret) {
-                printk("nat46: Unable to register nat46 device.\n");
+	ret = register_netdev(*dev);
+	if(ret) {
+		printk("nat46: Unable to register nat46 device.\n");
 		ret = -ENOMEM;
 		goto err_register_dev;
-        }
+	}
 
-        printk("nat46: netdevice nat46 '%s' created successfully.\n", devname);
+	printk("nat46: netdevice nat46 '%s' created successfully.\n", devname);
 	kfree(devname);
 
-        return 0;
+	return 0;
 
 err_register_dev:
 	free_netdev(*dev);
 err_alloc_dev:
 	kfree(devname);
 err:
-        return ret;
+	return ret;
 }
 
 void nat46_netdev_destroy(struct net_device *dev)
 {
 	netdev_nat46_set_instance(dev, NULL);
-        unregister_netdev(dev);
-        printk("nat46: Destroying nat46 device.\n");
+	unregister_netdev(dev);
+	printk("nat46: Destroying nat46 device.\n");
 }
 
 static int is_nat46(struct net_device *dev) {
@@ -190,13 +190,13 @@ static struct net_device *find_dev(char *name) {
 	dev = first_net_device(&init_net);
 	while (dev) {
 		if((0 == strcmp(dev->name, name)) && is_nat46(dev)) {
-    			if(debug) { 
+			if(debug) {
 				printk(KERN_INFO "found [%s]\n", dev->name);
 			}
 			out = dev;
 			break;
 		}
-    		dev = next_net_device(dev);
+		dev = next_net_device(dev);
 	}
 	read_unlock(&dev_base_lock);
 	return out;
@@ -230,7 +230,7 @@ int nat46_insert(char *devname, char *buf) {
 	int ret = -1;
 	if(dev) {
 		nat46_instance_t *nat46 = netdev_nat46_instance(dev);
-	        nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs+1, nat46, 0, 1);
+		nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs+1, nat46, 0, 1);
 		if(nat46_new) {
 			netdev_nat46_set_instance(dev, nat46_new);
 			ret = nat46_set_ipair_config(nat46_new, 0, buf, strlen(buf));
@@ -253,9 +253,9 @@ int nat46_configure(char *devname, char *buf) {
 
 void nat64_show_all_configs(struct seq_file *m) {
         struct net_device *dev;
-        read_lock(&dev_base_lock);
-        dev = first_net_device(&init_net);
-        while (dev) {
+	read_lock(&dev_base_lock);
+	dev = first_net_device(&init_net);
+	while (dev) {
 		if(is_nat46(dev)) {
 			nat46_instance_t *nat46 = netdev_nat46_instance(dev);
 			int buflen = 1024;
@@ -275,9 +275,9 @@ void nat64_show_all_configs(struct seq_file *m) {
 				kfree(buf);
 			}
 		}
-               	dev = next_net_device(dev);
+		dev = next_net_device(dev);
 	}
-        read_unlock(&dev_base_lock);
+	read_unlock(&dev_base_lock);
 
 }
 
@@ -285,16 +285,16 @@ void nat46_destroy_all(void) {
         struct net_device *dev;
         struct net_device *nat46dev;
 	do {
-        	read_lock(&dev_base_lock);
+		read_lock(&dev_base_lock);
 		nat46dev = NULL;
-        	dev = first_net_device(&init_net);
-        	while (dev) {
+		dev = first_net_device(&init_net);
+		while (dev) {
 			if(is_nat46(dev)) {
 				nat46dev = dev;
-               	 	}
-                	dev = next_net_device(dev);
-        	}
-        	read_unlock(&dev_base_lock);
+			}
+			dev = next_net_device(dev);
+		}
+		read_unlock(&dev_base_lock);
 		if(nat46dev) {
 			nat46_netdev_destroy(nat46dev);
 		}

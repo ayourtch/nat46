@@ -54,7 +54,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>");
 MODULE_DESCRIPTION("NAT46 stateless translation");
 
-int                     debug = 0;
+int debug = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "debugging messages level (default=1)");
 
@@ -64,14 +64,14 @@ static struct proc_dir_entry *nat46_proc_parent;
 
 static int nat46_proc_show(struct seq_file *m, void *v)
 {
-	nat64_show_all_configs(m);	
-        return 0;
+	nat64_show_all_configs(m);
+	return 0;
 }
 
 
 static int nat46_proc_open(struct inode *inode, struct file *file)
 {
-        return single_open(file, nat46_proc_show, NULL);
+	return single_open(file, nat46_proc_show, NULL);
 }
 
 static char *get_devname(char **ptail)
@@ -89,26 +89,26 @@ static char *get_devname(char **ptail)
 static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
                               size_t count, loff_t *ppos)
 {
-        char *buf = NULL;
+	char *buf = NULL;
 	char *tail = NULL;
 	char *devname = NULL;
 	char *arg_name = NULL;
 
-        buf = kmalloc(sizeof(char) * (count + 1), GFP_KERNEL);
-        if (!buf)
-                return -ENOMEM;
+	buf = kmalloc(sizeof(char) * (count + 1), GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
-        if (copy_from_user(buf, buffer, count)) {
-                kfree(buf);
-                return -EFAULT;
-        }
+	if (copy_from_user(buf, buffer, count)) {
+		kfree(buf);
+		return -EFAULT;
+	}
 	tail = buf;
-        buf[count] = '\0';
+	buf[count] = '\0';
 	if( (count > 0) && (buf[count-1] == '\n') ) {
 		buf[count-1] = '\0';
 	}
 
-        while (NULL != (arg_name = get_next_arg(&tail))) {
+	while (NULL != (arg_name = get_next_arg(&tail))) {
 		if (0 == strcmp(arg_name, "add")) {
 			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: adding device (%s)\n", devname);
@@ -128,46 +128,46 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 		}
 	}
 
-        kfree(buf);
-        return count;
+	kfree(buf);
+	return count;
 }
 
 static const struct file_operations nat46_proc_fops = {
-        .owner          = THIS_MODULE,
-        .open           = nat46_proc_open,
-        .read           = seq_read,
-        .llseek         = seq_lseek,
-        .release        = single_release,
-        .write          = nat46_proc_write,
+	.owner		= THIS_MODULE,
+	.open		= nat46_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= nat46_proc_write,
 };
 
 
 int create_nat46_proc_entry(void) {
-        nat46_proc_parent = proc_mkdir(NAT46_PROC_NAME, init_net.proc_net);
+	nat46_proc_parent = proc_mkdir(NAT46_PROC_NAME, init_net.proc_net);
 	if (nat46_proc_parent) {
-        	nat46_proc_entry = proc_create(NAT46_CONTROL_PROC_NAME, 0644, nat46_proc_parent, &nat46_proc_fops );
-        	if(!nat46_proc_entry) {
-                	printk(KERN_INFO "Error creating proc entry");
-                	return -ENOMEM; 
+		nat46_proc_entry = proc_create(NAT46_CONTROL_PROC_NAME, 0644, nat46_proc_parent, &nat46_proc_fops );
+		if(!nat46_proc_entry) {
+			printk(KERN_INFO "Error creating proc entry");
+			return -ENOMEM;
 		}
-        }
+	}
 	return 0;
 }
 
 
 static int __init nat46_init(void)
 {
-        int ret = 0;
+	int ret = 0;
 
-        printk("nat46: module (version %s) loaded.\n", NAT46_VERSION);
+	printk("nat46: module (version %s) loaded.\n", NAT46_VERSION);
 	ret = create_nat46_proc_entry();
 	if(ret) {
 		goto error;
-        }
-        return 0;
+	}
+	return 0;
 
 error:
-        return ret;
+	return ret;
 }
 
 static void __exit nat46_exit(void)
@@ -179,7 +179,7 @@ static void __exit nat46_exit(void)
 		}
 		remove_proc_entry(NAT46_PROC_NAME, init_net.proc_net);
 	}
-        printk("nat46: module unloaded.\n");
+	printk("nat46: module unloaded.\n");
 }
 
 module_init(nat46_init);

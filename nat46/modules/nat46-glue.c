@@ -35,7 +35,7 @@ nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int fr
   nat46->refcount = 1; /* The caller gets the reference */
   if (old) {
     nat46->debug = old->debug;
-    for(; (from_ipair >= 0) && (to_ipair >= 0) && 
+    for(; (from_ipair >= 0) && (to_ipair >= 0) &&
           (from_ipair < old->npairs) && (to_ipair < nat46->npairs); from_ipair++, to_ipair++) {
       nat46->pairs[to_ipair] = old->pairs[from_ipair];
     }
