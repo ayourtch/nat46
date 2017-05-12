@@ -620,9 +620,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
 }
 
 int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, int version) {
-  uint8_t psid_bits_len;
   uint8_t v4_lsb_bits_len = 32 - rule->v4_pref_len;
-
 
   if (memcmp(pipv6, &rule->v6_pref, rule->v6_pref_len/8)) {
     /* address not within the MAP IPv6 prefix */
@@ -644,7 +642,6 @@ int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
     nat46debug(0, "xlate_map_v6_to_v4: rule->ea_len < (32 - rule->v4_pref_len)");
     return 0;
   }
-  psid_bits_len = rule->ea_len - (32 - rule->v4_pref_len);
 
   memcpy(pipv4, &rule->v4_pref, 4);
   if (v4_lsb_bits_len) {
