@@ -524,7 +524,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
 
   uint16_t psid;
   uint16_t l4id = pl4id ? *pl4id : 0;
-  uint8_t psid_bits_len;
+  uint8_t psid_bits_len = rule->ea_len - (32 - rule->v4_pref_len);
   uint8_t v4_lsb_bits_len = 32 - rule->v4_pref_len;
 
   /* check that the ipv4 address is within the IPv4 map domain and reject if not */
@@ -534,19 +534,19 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
     return 0;
   }
 
-  if (!pl4id && v4_lsb_bits_len) {
-    nat46debug(5, "xlate_map_v4_to_v6: l4id required for MAP domain %pI4/%d", &rule->v4_pref, rule->v4_pref_len);
-    return 0;
-  }
-
   if (rule->ea_len < (32 - rule->v4_pref_len) ) {
     nat46debug(0, "xlate_map_v4_to_v6: rule->ea_len < (32 - rule->v4_pref_len)");
     return 0;
   }
+
+  if (!pl4id && psid_bits_len) {
+    nat46debug(5, "xlate_map_v4_to_v6: l4id required for MAP domain %pI4/%d (ea-len %d)", &rule->v4_pref, rule->v4_pref_len, rule->ea_len);
+    return 0;
+  }
+
   /* zero out the IPv6 address */
   memset(pipv6, 0, 16);
 
-  psid_bits_len = rule->ea_len - (32 - rule->v4_pref_len);
   psid = (ntohs(l4id) >> (16 - psid_bits_len - rule->psid_offset)) & (0xffff >> (16 - psid_bits_len));
   nat46debug(10, "xlate_map_v4_to_v6: ntohs(l4id): %04x psid_bits_len: %d, rule psid-offset: %d, psid: %d\n", ntohs(l4id), psid_bits_len, rule->psid_offset, psid);
 
