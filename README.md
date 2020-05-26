@@ -6,6 +6,13 @@ This is an OpenWRT feed with a Linux kernel module implementing flexible NAT46.
 Compiling
 =========
 
+The module by default uses procfs for communication between the user and kernel space.
+To use Netlink sockets instead, add the following to nat46/nat46/modules/Makefile
+when compiling:
+```
+EXTRA_CFLAGS += -DPROTO_NETLINK
+```
+
 With Barrier Breaker (trunk), add the following line to *feeds.conf.default*:
 ```
 src-git nat46 https://github.com/ayourtch/nat46.git
