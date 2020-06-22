@@ -125,6 +125,10 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: insert new rule into device (%s) with '%s'\n", devname, tail);
 			nat46_insert(devname, tail);
+		} else if (0 == strcmp(arg_name, "remove")) {
+			devname = get_devname(&tail);
+			printk(KERN_INFO "nat46: remove a rule from the device (%s) with '%s'\n", devname, tail);
+			nat46_remove(devname, tail);
 		}
 	}
 

@@ -22,7 +22,7 @@ int is_valid_nat46(nat46_instance_t *nat46) {
   return (nat46 && (nat46->sig == NAT46_SIGNATURE));
 }
 
-nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int from_ipair, int to_ipair) {
+nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int from_ipair, int to_ipair, int remove_ipair) {
   nat46_instance_t *nat46 = kzalloc(sizeof(nat46_instance_t) + npairs*sizeof(nat46_xlate_rulepair_t), GFP_KERNEL);
   if (!nat46) {
     printk("[nat46] make_nat46_instance: can not alloc a nat46 instance with %d pairs\n", npairs);
@@ -36,8 +36,11 @@ nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int fr
   if (old) {
     nat46->debug = old->debug;
     for(; (from_ipair >= 0) && (to_ipair >= 0) &&
-          (from_ipair < old->npairs) && (to_ipair < nat46->npairs); from_ipair++, to_ipair++) {
-      nat46->pairs[to_ipair] = old->pairs[from_ipair];
+          (from_ipair < old->npairs) && (to_ipair < nat46->npairs); from_ipair++) {
+      if (from_ipair != remove_ipair) {
+        nat46->pairs[to_ipair] = old->pairs[from_ipair];
+        to_ipair++;
+      }
     }
   }
   return nat46;

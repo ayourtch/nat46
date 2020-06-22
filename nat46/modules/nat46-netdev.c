@@ -95,7 +95,7 @@ static void netdev_nat46_set_instance(struct net_device *dev, nat46_instance_t *
 static void nat46_netdev_setup(struct net_device *dev)
 {
 	nat46_netdev_priv_t *priv = netdev_priv(dev);
-	nat46_instance_t *nat46 = alloc_nat46_instance(1, NULL, -1, -1);
+	nat46_instance_t *nat46 = alloc_nat46_instance(1, NULL, -1, -1, -1);
 
 	memset(priv, 0, sizeof(*priv));
 	priv->sig = NAT46_DEVICE_SIGNATURE;
@@ -230,7 +230,7 @@ int nat46_insert(char *devname, char *buf) {
 	int ret = -1;
 	if(dev) {
 		nat46_instance_t *nat46 = netdev_nat46_instance(dev);
-		nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs+1, nat46, 0, 1);
+		nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs+1, nat46, 0, 1, -1);
 		if(nat46_new) {
 			netdev_nat46_set_instance(dev, nat46_new);
 			ret = nat46_set_ipair_config(nat46_new, 0, buf, strlen(buf));
@@ -249,6 +249,47 @@ int nat46_configure(char *devname, char *buf) {
 	} else {
 		return -1;
 	}
+}
+
+int nat46_remove(char *devname, char *buf) {
+	int ret = -1;
+	int buflen = 1024;
+	char config_remove[buflen];
+	struct net_device *dev;
+	nat46_instance_t *nat46;
+	nat46_instance_t *nat46_remove;
+	int result_rem;
+	int i;
+
+	if((dev = find_dev(devname)) == NULL ||
+	   (nat46 = netdev_nat46_instance(dev)) == NULL ||
+	   (nat46_remove = alloc_nat46_instance(1, NULL, -1, -1, -1)) == NULL) {
+		return ret;
+	}
+
+	if(nat46_set_ipair_config(nat46_remove, 0, buf, buflen) < 0) {
+		release_nat46_instance(nat46_remove);
+		return ret;
+	}
+
+	result_rem = nat46_get_ipair_config(nat46_remove, 0, config_remove, buflen);
+	for(i = 0; i < nat46->npairs; i++) {
+		char config[buflen];
+		int result = nat46_get_ipair_config(nat46, i, config, buflen);
+
+		if (result_rem == result && strncmp(config_remove, config, result_rem) == 0) {
+			nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs-1, nat46, 0, 0, i);
+			if(nat46_new) {
+				netdev_nat46_set_instance(dev, nat46_new);
+				ret = 0;
+			} else {
+				printk("Could not remove the rule from device %s\n", devname);
+			}
+			break;
+		}
+	}
+	release_nat46_instance(nat46_remove);
+	return ret;
 }
 
 void nat64_show_all_configs(struct seq_file *m) {
