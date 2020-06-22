@@ -79,7 +79,7 @@ int nat46_get_config(nat46_instance_t *nat46, char *buf, int count);
 char *get_next_arg(char **ptail);
 nat46_instance_t *get_nat46_instance(struct sk_buff *sk);
 
-nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int from_ipair, int to_ipair);
+nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int from_ipair, int to_ipair, int remove_ipair);
 void release_nat46_instance(nat46_instance_t *nat46);
 
 #endif

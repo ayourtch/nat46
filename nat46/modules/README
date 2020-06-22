@@ -25,6 +25,10 @@ echo insert <ifname> <cfg-strings> | sudo tee /proc/net/nat46/control
 	insert a new rule with the specified config string at the head
 	of the rule set for the device.
 
+echo remove <ifname> <cfg-strings> | sudo tee /proc/net/nat46/control
+	removes a rule with the specified config string from the
+	rule set for the device.
+
 CONFIGURING NAT46 DEVICE
 -----------------------
 
