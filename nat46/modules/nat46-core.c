@@ -1473,9 +1473,11 @@ int pairs_xlate_v6_to_v4_outer(nat46_instance_t *nat46, struct ipv6hdr *ip6h, ui
   if (xlate_dst >= 0) {
     if (xlate_src < 0) {
       if(proto == NEXTHDR_ICMP) {
-        nat46debug(1, "[nat46] Could not translate remote address v6->v4, ipair %d, for ICMP6 use dest addr", ipair);
-        *pv4saddr = *pv4daddr;
-        xlate_src = xlate_dst;
+        /* RFC6145 Section 5.2 discussed about non-IPv4-translatable IPv6 addresses on the IPv6 headers,
+         * and left the solution for stateless translation as future work.
+         * RFC6791 has recommendations for this issue, but until that's implemented, silently drop this packet
+         */
+        nat46debug(1, "[nat46] Could not translate remote address v6->v4, ipair %d, for ICMP6 drop this packet", ipair);
       } else {
         nat46debug(5, "[nat46] Could not translate remote address v6->v4, ipair %d", ipair);
       }
