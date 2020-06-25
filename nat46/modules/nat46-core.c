@@ -1086,7 +1086,7 @@ static void nat46_fixup_icmp6_time_exceed(nat46_instance_t *nat46, struct ipv6hd
   update_icmp6_type_code(nat46, icmp6h, 11, icmp6h->icmp6_code);
 }
 
-static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb) {
+static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
   /*
    *         Parameter Problem (Type 4):  Translate the Type and Code as
    *         follows, and adjust the ICMPv4 checksum both to take the type/
@@ -1127,6 +1127,7 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
   u32 *pptr6 = icmp6_parameter_ptr(icmp6h);
   u8 *pptr4 = icmp_parameter_ptr((struct icmphdr *)icmp6h);
   int new_pptr = -1;
+  int len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
 
   switch(icmp6h->icmp6_code) {
     case 0:
@@ -1143,7 +1144,9 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
       }
       break;
     case 1:
+      *pptr6 = 0;
       update_icmp6_type_code(nat46, icmp6h, 3, 2);
+      len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
       break;
     case 2: /* fallthrough to default */
     default:
@@ -1181,7 +1184,7 @@ static void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, str
         nat46_fixup_icmp6_time_exceed(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
         break;
       case ICMPV6_PARAMPROB:
-        nat46_fixup_icmp6_paramprob(nat46, ip6h, icmp6h, old_skb);
+        nat46_fixup_icmp6_paramprob(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
         break;
       default:
         ip6h->nexthdr = NEXTHDR_NONE;
