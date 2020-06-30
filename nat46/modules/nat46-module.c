@@ -31,6 +31,13 @@
 #include <linux/proc_fs.h>      // for the proc filesystem
 #include <linux/seq_file.h>     // for sequence files
 
+#ifdef PROTO_NETLINK
+/* Netlink IPC */
+#include <linux/netlink.h>
+#include <linux/skbuff.h>
+#include <net/sock.h>
+#endif
+
 #include <net/ip.h>
 #include <net/tcp.h>
 #include <net/udp.h>
@@ -50,6 +57,10 @@
 #define NAT46_VERSION __DATE__ " " __TIME__
 #endif
 
+#ifdef PROTO_NETLINK
+#define NETLINK_USER 31
+#endif /* PROTO_NETLINK */
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>");
 MODULE_DESCRIPTION("NAT46 stateless translation");
@@ -61,6 +72,9 @@ MODULE_PARM_DESC(debug, "debugging messages level (default=1)");
 static struct proc_dir_entry *nat46_proc_entry;
 static struct proc_dir_entry *nat46_proc_parent;
 
+#ifdef PROTO_NETLINK
+struct sock *nl_sk = NULL;
+#endif /* PROTO_NETLINK */
 
 static int nat46_proc_show(struct seq_file *m, void *v)
 {
@@ -86,13 +100,58 @@ static char *get_devname(char **ptail)
 	return devname;
 }
 
+static void
+nat46_proc_cmd(char *cmd)
+{
+	char *arg = NULL;
+	char *devname = NULL;
+
+	while(NULL != (arg = get_next_arg (&cmd))) {
+		if(0 == strcmp(arg, "add")) {
+			devname = get_devname(&cmd);
+			printk(KERN_INFO "nat46: adding device (%s)\n", devname);
+			nat46_create(devname);
+		}
+		else if(0 == strcmp(arg, "del")) {
+			devname = get_devname(&cmd);
+			printk(KERN_INFO "nat46: deleting device (%s)\n", devname);
+			nat46_destroy(devname);
+		}
+		else if(0 == strcmp(arg, "config")) {
+			devname = get_devname(&cmd);
+			printk(KERN_INFO "nat46: configure device (%s) with '%s'\n", devname, cmd);
+			nat46_configure(devname, cmd);
+		}
+		else if(0 == strcmp(arg, "insert")) {
+			devname = get_devname(&cmd);
+			printk(KERN_INFO "nat46: insert new rule into device (%s) with '%s'\n",
+				devname, cmd);
+			nat46_insert(devname, cmd);
+		}
+	}
+}
+
+#ifdef PROTO_NETLINK
+static void
+nat46_nl_recv_msg(struct sk_buff *skb_in)
+{
+	struct nlmsghdr *nl_hdr;
+	int pid;
+	char *cmd = NULL;
+
+	nl_hdr = (struct nlmsghdr *) skb_in->data;
+	pid = nl_hdr->nlmsg_pid;
+	cmd = (char *) nlmsg_data (nl_hdr);
+
+	nat46_proc_cmd(cmd);
+}
+#endif /* PROTO_NETLINK */
+
 static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
                               size_t count, loff_t *ppos)
 {
 	char *buf = NULL;
 	char *tail = NULL;
-	char *devname = NULL;
-	char *arg_name = NULL;
 
 	buf = kmalloc(sizeof(char) * (count + 1), GFP_KERNEL);
 	if (!buf)
@@ -108,25 +167,7 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 		buf[count-1] = '\0';
 	}
 
-	while (NULL != (arg_name = get_next_arg(&tail))) {
-		if (0 == strcmp(arg_name, "add")) {
-			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: adding device (%s)\n", devname);
-			nat46_create(devname);
-		} else if (0 == strcmp(arg_name, "del")) {
-			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: deleting device (%s)\n", devname);
-			nat46_destroy(devname);
-		} else if (0 == strcmp(arg_name, "config")) {
-			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: configure device (%s) with '%s'\n", devname, tail);
-			nat46_configure(devname, tail);
-		} else if (0 == strcmp(arg_name, "insert")) {
-			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: insert new rule into device (%s) with '%s'\n", devname, tail);
-			nat46_insert(devname, tail);
-		}
-	}
+	nat46_proc_cmd(tail);
 
 	kfree(buf);
 	return count;
@@ -157,6 +198,21 @@ int create_nat46_proc_entry(void) {
 
 static int __init nat46_init(void)
 {
+#ifdef PROTO_NETLINK
+	struct netlink_kernel_cfg nl_cfg = {
+		.input = nat46_nl_recv_msg
+	};
+	printk("nat46: module (version %s) loaded.\n", NAT46_VERSION);
+
+	nl_sk = netlink_kernel_create(&init_net, NETLINK_USER, &nl_cfg);
+	if (!nl_sk)
+	{
+		printk(KERN_ALERT "nat46: error creating socket\n");
+		return -1;
+	}
+
+	return 0;
+#else
 	int ret = 0;
 
 	printk("nat46: module (version %s) loaded.\n", NAT46_VERSION);
@@ -168,10 +224,15 @@ static int __init nat46_init(void)
 
 error:
 	return ret;
+#endif /* PROTO_NETLINK */
 }
 
 static void __exit nat46_exit(void)
 {
+#ifdef PROTO_NETLINK
+	netlink_kernel_release(nl_sk);
+	nat46_destroy_all();
+#else
 	nat46_destroy_all();
 	if (nat46_proc_parent) {
 		if (nat46_proc_entry) {
@@ -179,6 +240,7 @@ static void __exit nat46_exit(void)
 		}
 		remove_proc_entry(NAT46_PROC_NAME, init_net.proc_net);
 	}
+#endif /* PROTO_NETLINK */
 	printk("nat46: module unloaded.\n");
 }
 
