@@ -15,6 +15,7 @@
  *
  */
 
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -136,6 +137,7 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 	return count;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0)
 static const struct file_operations nat46_proc_fops = {
 	.owner		= THIS_MODULE,
 	.open		= nat46_proc_open,
@@ -144,6 +146,15 @@ static const struct file_operations nat46_proc_fops = {
 	.release	= single_release,
 	.write		= nat46_proc_write,
 };
+#else
+static const struct proc_ops nat46_proc_fops = {
+	.proc_open	= nat46_proc_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+	.proc_write	= nat46_proc_write,
+};
+#endif
 
 
 int create_nat46_proc_entry(void) {
