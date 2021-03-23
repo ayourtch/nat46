@@ -14,3 +14,4 @@
  */
 
 extern int debug;
+extern int zero_csum_pass;

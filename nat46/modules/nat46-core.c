@@ -21,6 +21,7 @@
 
 #include "nat46-glue.h"
 #include "nat46-core.h"
+#include "nat46-module.h"
 
 void
 nat46debug_dump(nat46_instance_t *nat46, int level, void *addr, int len)
@@ -718,6 +719,10 @@ __sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, unsigned short len,
                   unsigned char proto, u16 csum) {
   u16 *pdata;
   u16 len0, len1;
+  if ((csum == 0) && zero_csum_pass && (proto == IPPROTO_UDP)) {
+	  /* return back the zero checksum in case of UDP checksum zero */
+	  return csum;
+  }
 
   pdata = (u16 *)&saddr;
   csum = csum16_upd(csum, 0, *pdata++);
