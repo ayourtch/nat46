@@ -719,10 +719,6 @@ __sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, unsigned short len,
                   unsigned char proto, u16 csum) {
   u16 *pdata;
   u16 len0, len1;
-  if ((csum == 0) && zero_csum_pass && (proto == IPPROTO_UDP)) {
-	  /* return back the zero checksum in case of UDP checksum zero */
-	  return csum;
-  }
 
   pdata = (u16 *)&saddr;
   csum = csum16_upd(csum, 0, *pdata++);
@@ -928,8 +924,13 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
       }
     case NEXTHDR_UDP: {
       struct udphdr *udp = ptrans_hdr;
-      u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, infrag_payload_len, NEXTHDR_UDP, udp->check);
-      u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, infrag_payload_len, NEXTHDR_UDP, sum1); /* add pseudoheader */
+      u16 sum1, sum2;
+      if ((udp->check == 0) && zero_csum_pass) {
+        /* zero checksum and the config to pass it is set - do nothing with it */
+        break;
+      }
+      sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, infrag_payload_len, NEXTHDR_UDP, udp->check);
+      sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, infrag_payload_len, NEXTHDR_UDP, sum1); /* add pseudoheader */
       if(ul_sum) {
         *ul_sum = csum16_upd(*ul_sum, udp->check, sum2);
         }
