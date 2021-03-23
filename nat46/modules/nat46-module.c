@@ -56,8 +56,13 @@ MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>");
 MODULE_DESCRIPTION("NAT46 stateless translation");
 
 int debug = 0;
+int zero_csum_pass = 0;
+
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "debugging messages level (default=1)");
+
+module_param(zero_csum_pass, int, 0);
+MODULE_PARM_DESC(zero_csum_pass, "pass all-zero checksum unchanged (default=0)");
 
 static struct proc_dir_entry *nat46_proc_entry;
 static struct proc_dir_entry *nat46_proc_parent;
