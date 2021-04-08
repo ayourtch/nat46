@@ -14,6 +14,7 @@
  */
 
 #define NAT46_DEVICE_SIGNATURE 0x544e36dd
+#define NAT46_CFG_BUFLEN 200
 
 int nat46_create(char *devname);
 int nat46_destroy(char *devname);

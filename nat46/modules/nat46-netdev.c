@@ -260,8 +260,7 @@ int nat46_configure(char *devname, char *buf) {
 
 int nat46_remove(char *devname, char *buf) {
 	int ret = -1;
-	int buflen = 1024;
-	char config_remove[buflen];
+	char config_remove[NAT46_CFG_BUFLEN];
 	struct net_device *dev;
 	nat46_instance_t *nat46;
 	nat46_instance_t *nat46_remove;
@@ -274,15 +273,15 @@ int nat46_remove(char *devname, char *buf) {
 		return ret;
 	}
 
-	if(nat46_set_ipair_config(nat46_remove, 0, buf, buflen) < 0) {
+	if(nat46_set_ipair_config(nat46_remove, 0, buf, NAT46_CFG_BUFLEN) < 0) {
 		release_nat46_instance(nat46_remove);
 		return ret;
 	}
 
-	result_rem = nat46_get_ipair_config(nat46_remove, 0, config_remove, buflen);
+	result_rem = nat46_get_ipair_config(nat46_remove, 0, config_remove, NAT46_CFG_BUFLEN);
 	for(i = 0; i < nat46->npairs; i++) {
-		char config[buflen];
-		int result = nat46_get_ipair_config(nat46, i, config, buflen);
+		char config[NAT46_CFG_BUFLEN];
+		int result = nat46_get_ipair_config(nat46, i, config, NAT46_CFG_BUFLEN);
 
 		if (result_rem == result && strncmp(config_remove, config, result_rem) == 0) {
 			nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs-1, nat46, 0, 0, i);
@@ -306,13 +305,12 @@ void nat64_show_all_configs(struct seq_file *m) {
 	while (dev) {
 		if(is_nat46(dev)) {
 			nat46_instance_t *nat46 = netdev_nat46_instance(dev);
-			int buflen = 1024;
 			int ipair = -1;
-			char *buf = kmalloc(buflen+1, GFP_KERNEL);
+			char *buf = kmalloc(NAT46_CFG_BUFLEN + 1, GFP_KERNEL);
 			seq_printf(m, "add %s\n", dev->name);
 			if(buf) {
 				for(ipair = 0; ipair < nat46->npairs; ipair++) {
-					nat46_get_ipair_config(nat46, ipair, buf, buflen);
+					nat46_get_ipair_config(nat46, ipair, buf, NAT46_CFG_BUFLEN);
 					if(ipair < nat46->npairs-1) {
 						seq_printf(m,"insert %s %s\n", dev->name, buf);
 					} else {
