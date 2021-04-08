@@ -1576,6 +1576,7 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
         }
       case NEXTHDR_UDP: {
         struct udphdr *udp = add_offset(ip6h, v6packet_l3size);
+        u16 sum1, sum2;
         if ((udp->check == 0) && zero_csum_pass) {
           /* zero checksum and the config to pass it is set - do nothing with it */
           break;
