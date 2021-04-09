@@ -1581,8 +1581,8 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
           /* zero checksum and the config to pass it is set - do nothing with it */
           break;
         }
-        u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_UDP, udp->check);
-        u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, l3_infrag_payload_len, NEXTHDR_UDP, sum1);
+        sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_UDP, udp->check);
+        sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, l3_infrag_payload_len, NEXTHDR_UDP, sum1);
         udp->check = sum2;
         break;
         }
