@@ -169,6 +169,7 @@ void nat46_netdev_destroy(struct net_device *dev)
 {
 	netdev_nat46_set_instance(dev, NULL);
 	unregister_netdev(dev);
+	free_netdev(dev);
 	printk("nat46: Destroying nat46 device.\n");
 }
 
