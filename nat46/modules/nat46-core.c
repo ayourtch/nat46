@@ -1143,6 +1143,8 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
         if (new_pptr >= 0) {
           icmp6h->icmp6_cksum = csum16_upd(icmp6h->icmp6_cksum, (*pptr6 & 0xffff), (new_pptr << 8));
           *pptr4 = 0xff & new_pptr;
+          update_icmp6_type_code(nat46, icmp6h, 12, 0);
+          len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
         } else {
           ip6h->nexthdr = NEXTHDR_NONE;
         }
@@ -1151,6 +1153,8 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
       }
       break;
     case 1:
+      icmp6h->icmp6_cksum = csum16_upd(icmp6h->icmp6_cksum, ((*pptr6 >> 16) & 0xffff), 0);
+      icmp6h->icmp6_cksum = csum16_upd(icmp6h->icmp6_cksum, (*pptr6 & 0xffff), 0);
       *pptr6 = 0;
       update_icmp6_type_code(nat46, icmp6h, 3, 2);
       len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
