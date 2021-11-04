@@ -64,6 +64,8 @@ MODULE_PARM_DESC(debug, "debugging messages level (default=1)");
 module_param(zero_csum_pass, int, 0);
 MODULE_PARM_DESC(zero_csum_pass, "pass all-zero checksum unchanged (default=0)");
 
+static DEFINE_MUTEX(add_del_lock);
+
 static struct proc_dir_entry *nat46_proc_entry;
 static struct proc_dir_entry *nat46_proc_parent;
 
@@ -118,23 +120,33 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 		if (0 == strcmp(arg_name, "add")) {
 			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: adding device (%s)\n", devname);
+			mutex_lock(&add_del_lock);
 			nat46_create(devname);
+			mutex_unlock(&add_del_lock);
 		} else if (0 == strcmp(arg_name, "del")) {
 			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: deleting device (%s)\n", devname);
+			mutex_lock(&add_del_lock);
 			nat46_destroy(devname);
+			mutex_unlock(&add_del_lock);
 		} else if (0 == strcmp(arg_name, "config")) {
 			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: configure device (%s) with '%s'\n", devname, tail);
+			mutex_lock(&add_del_lock);
 			nat46_configure(devname, tail);
+			mutex_unlock(&add_del_lock);
 		} else if (0 == strcmp(arg_name, "insert")) {
 			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: insert new rule into device (%s) with '%s'\n", devname, tail);
+			mutex_lock(&add_del_lock);
 			nat46_insert(devname, tail);
+			mutex_unlock(&add_del_lock);
 		} else if (0 == strcmp(arg_name, "remove")) {
 			devname = get_devname(&tail);
 			printk(KERN_INFO "nat46: remove a rule from the device (%s) with '%s'\n", devname, tail);
+			mutex_lock(&add_del_lock);
 			nat46_remove(devname, tail);
+			mutex_unlock(&add_del_lock);
 		}
 	}
 
