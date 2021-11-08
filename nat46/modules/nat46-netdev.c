@@ -167,6 +167,8 @@ err:
 
 void nat46_netdev_destroy(struct net_device *dev)
 {
+	dev->flags &= ~IFF_UP;
+	netif_stop_queue(dev);
 	netdev_nat46_set_instance(dev, NULL);
 	unregister_netdev(dev);
 	free_netdev(dev);
