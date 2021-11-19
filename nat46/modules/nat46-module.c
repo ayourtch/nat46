@@ -86,7 +86,7 @@ static char *get_devname(char **ptail)
 {
 	const int maxlen = IFNAMSIZ-1;
 	char *devname = get_next_arg(ptail);
-	if(strlen(devname) > maxlen) {
+	if(devname && (strlen(devname) > maxlen)) {
 		printk(KERN_INFO "nat46: '%s' is "
 			"longer than %d chars, truncating\n", devname, maxlen);
 		devname[maxlen] = 0;
