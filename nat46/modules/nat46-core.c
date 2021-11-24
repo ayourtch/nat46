@@ -1824,7 +1824,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   }
 
   /* Remove any debris in the socket control block */
-  memset(IPCB(new_skb), 0, sizeof(struct inet_skb_parm));
+  memset(IP6CB(new_skb), 0, sizeof(struct inet6_skb_parm));
   /* Remove netfilter references to IPv4 packet, new netfilter references will be created based on IPv6 packet */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,4,0)
   nf_reset(new_skb);
@@ -1870,7 +1870,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   // FIXME: check if you can not fit the packet into the cached MTU
   // if (dst_mtu(skb_dst(new_skb))==0) { }
 
-  nat46debug(5, "about to send v6 packet, flags: %02x",  IPCB(new_skb)->flags);
+  nat46debug(5, "about to send v6 packet, flags: %02x",  IP6CB(new_skb)->flags);
   nat46_netdev_count_xmit(new_skb, old_skb->dev);
   netif_rx(new_skb);
 
