@@ -15,3 +15,4 @@
 
 extern int debug;
 extern int zero_csum_pass;
+extern int ip_tos_ignore;
