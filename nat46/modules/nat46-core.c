@@ -1833,9 +1833,9 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
 #endif
 
   /* expand header (add 20 extra bytes at the beginning of sk_buff) */
-  pskb_expand_head(new_skb, IPV6V4HDRDELTA + (add_frag_header?8:0), 0, GFP_ATOMIC);
+  pskb_expand_head(new_skb, IPV6HDRSIZE - (hdr4->ihl << 2) + (add_frag_header?8:0), 0, GFP_ATOMIC);
 
-  skb_push(new_skb, IPV6V4HDRDELTA + (add_frag_header?8:0)); /* push boundary by extra 20 bytes */
+  skb_push(new_skb, IPV6HDRSIZE - (hdr4->ihl << 2) + (add_frag_header?8:0)); /* push boundary by extra 20 bytes */
 
   skb_reset_network_header(new_skb);
   skb_set_transport_header(new_skb, IPV6HDRSIZE + (add_frag_header?8:0) ); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
@@ -1848,7 +1848,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   *(__be32 *)hdr6 = htonl(0x60000000 | (tclass << 20)) | flowlabel; /* version, priority, flowlabel */
 
   /* IPv6 length is a payload length, IPv4 is hdr+payload */
-  hdr6->payload_len = htons(ntohs(hdr4->tot_len) - sizeof(struct iphdr) + (add_frag_header?8:0));
+  hdr6->payload_len = htons(ntohs(hdr4->tot_len) - (hdr4->ihl << 2) + (add_frag_header?8:0));
   hdr6->nexthdr = hdr4->protocol;
   hdr6->hop_limit = hdr4->ttl;
   memcpy(&hdr6->saddr, v6saddr, 16);
