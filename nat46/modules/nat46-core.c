@@ -1844,7 +1844,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   memset(hdr6, 0, sizeof(*hdr6) + (add_frag_header?8:0));
 
   /* build IPv6 header */
-  tclass = 0; /* traffic class */
+  tclass = ip_tos_ignore ? 0 : hdr4->tos; /* traffic class */
   *(__be32 *)hdr6 = htonl(0x60000000 | (tclass << 20)) | flowlabel; /* version, priority, flowlabel */
 
   /* IPv6 length is a payload length, IPv4 is hdr+payload */
