@@ -67,8 +67,8 @@ typedef struct {
   nat46_xlate_rulepair_t pairs[0]; /* npairs */
 } nat46_instance_t;
 
-void nat46_ipv6_input(struct sk_buff *old_skb);
-void nat46_ipv4_input(struct sk_buff *old_skb);
+int nat46_ipv6_input(struct sk_buff *old_skb);
+int nat46_ipv4_input(struct sk_buff *old_skb);
 
 int nat46_set_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int count);
 int nat46_set_config(nat46_instance_t *nat46, char *buf, int count);
