@@ -17,7 +17,13 @@
  */
 
 #include <net/route.h>
+#include <net/ipv6_frag.h>
 #include <linux/version.h>
+#if IS_ENABLED(CONFIG_NF_CONNTRACK)
+#include <net/netfilter/nf_conntrack.h>
+#endif
+#include <net/netfilter/nf_conntrack_zones.h>
+#include <net/netfilter/ipv6/nf_defrag_ipv6.h>
 
 #include "nat46-glue.h"
 #include "nat46-core.h"
@@ -269,6 +275,78 @@ int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
     nat46debug(0, "nat46_get_config: npairs is 0");
   }
   return ret;
+}
+
+/*
+ * Returns 0 on success, -EINPROGRESS if 'skb' is stolen, or other nonzero
+ * value if 'skb' is freed.
+ */
+static int try_reassembly(struct sk_buff *old_skb) {
+  u16 zone_id = NF_CT_DEFAULT_ZONE_ID;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+  struct net *net = dev_net(old_skb->dev);
+#else
+  struct sk_buff *reasm;
+#endif
+  int err;
+
+#if IS_ENABLED(CONFIG_NF_CONNTRACK)
+  if (skb_nfct(old_skb)) {
+    enum ip_conntrack_info ctinfo;
+    const struct nf_conn *ct = nf_ct_get(old_skb, &ctinfo);
+
+    zone_id = nf_ct_zone_id(nf_ct_zone(ct), CTINFO2DIR(ctinfo));
+  }
+#endif
+
+  if (old_skb->protocol == htons(ETH_P_IP)) {
+    enum ip_defrag_users user = IP_DEFRAG_CONNTRACK_IN + zone_id;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+    err = ip_defrag(net, old_skb, user);
+#else
+    err = ip_defrag(old_skb, user);
+#endif
+    if (err) {
+      return err;
+    }
+
+    old_skb->ignore_df = 1;
+  } else if (old_skb->protocol == htons(ETH_P_IPV6)) {
+    enum ip6_defrag_users user = IP6_DEFRAG_CONNTRACK_IN + zone_id;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+    err = nf_ct_frag6_gather(net, old_skb, user);
+    if (err) {
+      if (err != -EINPROGRESS) {
+        dev_kfree_skb_any(old_skb);
+      }
+      return err;
+    }
+#else
+    reasm = nf_ct_frag6_gather(old_skb, user);
+    if (!reasm) {
+      return -EINPROGRESS;
+    }
+
+    if (old_skb == reasm) {
+      dev_kfree_skb_any(old_skb);
+      return -EINVAL;
+    }
+
+    skb_get(old_skb);
+    nf_ct_frag6_consume_orig(reasm);
+
+    skb_morph(old_skb, reasm);
+    old_skb->next = reasm->next;
+    dev_consume_skb_any(reasm);
+#endif
+  } else {
+    dev_kfree_skb_any(old_skb);
+    return -EPFNOSUPPORT;
+  }
+
+  return 0;
 }
 
 
@@ -1502,7 +1580,7 @@ int pairs_xlate_v6_to_v4_outer(nat46_instance_t *nat46, struct ipv6hdr *ip6h, ui
 }
 
 
-void nat46_ipv6_input(struct sk_buff *old_skb) {
+int nat46_ipv6_input(struct sk_buff *old_skb) {
   struct ipv6hdr *ip6h = ipv6_hdr(old_skb);
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
   uint16_t proto;
@@ -1512,6 +1590,7 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
   struct iphdr * iph;
   __u32 v4saddr, v4daddr;
   struct sk_buff * new_skb = 0;
+  int err = 0;
   int truncSize = 0;
   int tailTruncSize = 0;
   int v6packet_l3size = sizeof(*ip6h);
@@ -1556,6 +1635,17 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
         frag_off = htons(((ntohs(fh->frag_off) & 7) << 13) + (((ntohs(fh->frag_off) >> 3) & 0x1FFF)));
         frag_id = fold_ipv6_frag_id(fh->identification);
         nat46debug(2, "Not first fragment, frag_off: %04X, frag id: %04X orig frag_off: %04X", ntohs(frag_off), frag_id, ntohs(fh->frag_off));
+      }
+      if (NEXTHDR_ICMP == proto) {
+        err = try_reassembly(old_skb);
+        if (err) {
+          goto done;
+        }
+        ip6h = ipv6_hdr(old_skb);
+        v6packet_l3size = sizeof(*ip6h);
+        l3_infrag_payload_len = ntohs(ip6h->payload_len);
+        frag_off = 0; /* no DF bit */
+        check_for_l4 = 1;
       }
     }
   } else {
@@ -1648,6 +1738,7 @@ void nat46_ipv6_input(struct sk_buff *old_skb) {
 
 done:
   release_nat46_instance(nat46);
+  return err;
 }
 
 
@@ -1688,6 +1779,9 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomi
     case NEXTHDR_ICMP: {
       struct icmp6hdr *icmp6h = icmp6_hdr(skb);
       unsigned icmp6len = 0;
+      if (do_atomic_frag) {
+        break;
+      }
       icmp6len = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* ICMP header + payload */
       icmp6h->icmp6_cksum = 0;
       sum1 = csum_partial((char*)icmp6h, icmp6len, 0); /* calculate checksum for TCP hdr+payload */
@@ -1747,11 +1841,12 @@ int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr4, uint
 }
 
 
-void nat46_ipv4_input(struct sk_buff *old_skb) {
+int nat46_ipv4_input(struct sk_buff *old_skb) {
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
   struct sk_buff *new_skb;
   uint16_t sport = 0, dport = 0;
 
+  int err = 0;
   int tclass = 0;
   int flowlabel = 0;
   int check_for_l4 = 0;
@@ -1772,6 +1867,17 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
   nat46debug(1, "nat46_ipv4_input packet");
   nat46debug(5, "nat46_ipv4_input protocol: %d, len: %d, flags: %02x", hdr4->protocol, old_skb->len, IPCB(old_skb)->flags);
   if(0 == (ntohs(hdr4->frag_off) & 0x3FFF) ) {
+    check_for_l4 = 1;
+  } else if (IPPROTO_ICMP == hdr4->protocol) {
+    /*
+     * receive fragmented ICMP:
+     * Need to reassemble it before processing.
+     */
+    err = try_reassembly(old_skb);
+    if (err) {
+      goto done;
+    }
+    hdr4 = ip_hdr(old_skb);
     check_for_l4 = 1;
   } else {
     add_frag_header = 1;
@@ -1805,7 +1911,8 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
     }
   } else {
     if (IPPROTO_ICMP == hdr4->protocol) {
-      hdr4->protocol = NEXTHDR_ICMP;
+      /* should not happen, we reassemble at beginning */
+      goto done;
     }
     dport = 0;
     sport = 0;
@@ -1876,6 +1983,7 @@ void nat46_ipv4_input(struct sk_buff *old_skb) {
 
 done:
   release_nat46_instance(nat46);
+  return err;
 }
 
 

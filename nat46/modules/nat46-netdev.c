@@ -62,15 +62,19 @@ static int nat46_netdev_down(struct net_device *dev)
 
 static netdev_tx_t nat46_netdev_xmit(struct sk_buff *skb, struct net_device *dev)
 {
+	int ret = 0;
+
 	dev->stats.rx_packets++;
 	dev->stats.rx_bytes += skb->len;
 	if(ETH_P_IP == ntohs(skb->protocol)) {
-		nat46_ipv4_input(skb);
+		ret = nat46_ipv4_input(skb);
 	}
 	if(ETH_P_IPV6 == ntohs(skb->protocol)) {
-		nat46_ipv6_input(skb);
+		ret = nat46_ipv6_input(skb);
 	}
-	kfree_skb(skb);
+	if(0 == ret) {
+		dev_kfree_skb_any(skb);
+	}
 	return NETDEV_TX_OK;
 }
 
