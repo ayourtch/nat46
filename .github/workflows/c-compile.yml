@@ -1,0 +1,19 @@
+name: C/C++ CI
+
+on:
+  # push
+  # pull_request
+  workflow_dispatch
+  
+  
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: build the NAT46 module
+      run: |
+        cd nat46/modules
+        KCPPFLAGS='-DNAT46_VERSION=\"test\" -Werror' make
