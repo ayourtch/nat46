@@ -114,7 +114,7 @@ static void nat46_netdev_setup(struct net_device *dev)
 	dev->flags = IFF_NOARP | IFF_POINTOPOINT;
 }
 
-int nat46_netdev_create(char *basename, struct net_device **dev)
+int nat46_netdev_create(struct net *net, char *basename, struct net_device **dev)
 {
 	int ret = 0;
 	char *devname = NULL;
@@ -149,6 +149,7 @@ int nat46_netdev_create(char *basename, struct net_device **dev)
 		goto err_alloc_dev;
 	}
 
+	dev_net_set(*dev, net);
 	ret = register_netdev(*dev);
 	if(ret) {
 		printk("nat46: Unable to register nat46 device.\n");
@@ -184,8 +185,7 @@ static int is_nat46(struct net_device *dev) {
 	return (priv && (NAT46_DEVICE_SIGNATURE == priv->sig));
 }
 
-
-static struct net_device *find_dev(char *name) {
+static struct net_device *find_dev(struct net *net, char *name) {
 	struct net_device *dev;
 	struct net_device *out = NULL;
 
@@ -194,7 +194,7 @@ static struct net_device *find_dev(char *name) {
 	}
 
 	read_lock(&dev_base_lock);
-	dev = first_net_device(&init_net);
+	dev = first_net_device(net);
 	while (dev) {
 		if((0 == strcmp(dev->name, name)) && is_nat46(dev)) {
 			if(debug) {
@@ -209,19 +209,19 @@ static struct net_device *find_dev(char *name) {
 	return out;
 }
 
-int nat46_create(char *devname) {
+int nat46_create(struct net *net, char *devname) {
 	int ret = 0;
-	struct net_device *dev = find_dev(devname);
+	struct net_device *dev = find_dev(net, devname);
 	if (dev) {
 		printk("Can not add: device '%s' already exists!\n", devname);
 		return -1;
 	}
-	ret = nat46_netdev_create(devname, &dev);
+	ret = nat46_netdev_create(net, devname, &dev);
 	return ret;
 }
 
-int nat46_destroy(char *devname) {
-	struct net_device *dev = find_dev(devname);
+int nat46_destroy(struct net *net, char *devname) {
+	struct net_device *dev = find_dev(net, devname);
 	if(dev) {
 		printk("Destroying '%s'\n", devname);
 		nat46_netdev_destroy(dev);
@@ -232,8 +232,8 @@ int nat46_destroy(char *devname) {
 	}
 }
 
-int nat46_insert(char *devname, char *buf) {
-	struct net_device *dev = find_dev(devname);
+int nat46_insert(struct net *net, char *devname, char *buf) {
+	struct net_device *dev = find_dev(net, devname);
 	int ret = -1;
 	if(dev) {
 		nat46_instance_t *nat46 = netdev_nat46_instance(dev);
@@ -248,8 +248,8 @@ int nat46_insert(char *devname, char *buf) {
 	return ret;
 }
 
-int nat46_configure(char *devname, char *buf) {
-	struct net_device *dev = find_dev(devname);
+int nat46_configure(struct net *net, char *devname, char *buf) {
+	struct net_device *dev = find_dev(net, devname);
 	if(dev) {
 		nat46_instance_t *nat46 = netdev_nat46_instance(dev);
 		return nat46_set_config(nat46, buf, strlen(buf));
@@ -258,7 +258,7 @@ int nat46_configure(char *devname, char *buf) {
 	}
 }
 
-int nat46_remove(char *devname, char *buf) {
+int nat46_remove(struct net *net, char *devname, char *buf) {
 	int ret = -1;
 	char config_remove[NAT46_CFG_BUFLEN];
 	struct net_device *dev;
@@ -267,7 +267,7 @@ int nat46_remove(char *devname, char *buf) {
 	int result_rem;
 	int i;
 
-	if((dev = find_dev(devname)) == NULL ||
+	if((dev = find_dev(net, devname)) == NULL ||
 	   (nat46 = netdev_nat46_instance(dev)) == NULL ||
 	   (nat46_remove = alloc_nat46_instance(1, NULL, -1, -1, -1)) == NULL) {
 		return ret;
@@ -298,10 +298,10 @@ int nat46_remove(char *devname, char *buf) {
 	return ret;
 }
 
-void nat64_show_all_configs(struct seq_file *m) {
+void nat64_show_all_configs(struct net *net, struct seq_file *m) {
         struct net_device *dev;
 	read_lock(&dev_base_lock);
-	dev = first_net_device(&init_net);
+	dev = first_net_device(net);
 	while (dev) {
 		if(is_nat46(dev)) {
 			nat46_instance_t *nat46 = netdev_nat46_instance(dev);
@@ -327,13 +327,13 @@ void nat64_show_all_configs(struct seq_file *m) {
 
 }
 
-void nat46_destroy_all(void) {
+void nat46_destroy_all(struct net *net) {
         struct net_device *dev;
         struct net_device *nat46dev;
 	do {
 		read_lock(&dev_base_lock);
 		nat46dev = NULL;
-		dev = first_net_device(&init_net);
+		dev = first_net_device(net);
 		while (dev) {
 			if(is_nat46(dev)) {
 				nat46dev = dev;
