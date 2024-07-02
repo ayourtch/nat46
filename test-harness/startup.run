@@ -1,0 +1,51 @@
+# This file is executed after the host filesystem is mounted
+# Modify this file to customize your test environment
+
+# List root directory to verify mount
+ls /
+
+# Load additional kernel modules
+insmod /nf_defrag_ipv6.ko
+insmod /nat46.ko
+
+ifconfig lo 127.0.0.1 netmask 255.0.0.0
+ifconfig lo ::1/128
+ifconfig lo up
+
+# Setup TAP interfaces
+mknod /dev/net/tun c 10 200
+tap add tap0
+ifconfig tap0 192.168.1.1 netmask 255.255.255.0
+ifconfig tap0 2001:db8:1::1/64
+ifconfig tap0 up
+tap add tap1
+ifconfig tap1 2001:db8::1/64
+ifconfig tap1 up
+ifconfig
+
+# set the mac addresses
+ifconfig tap0 hw ether 0E:86:3C:CD:51:CA
+ifconfig tap1 hw ether 00:11:22:33:44:55
+ifconfig nat46dev up
+
+# add phantom hosts
+fakehost add tap1 fe80::1 icmp router
+fakehost add tap1 2001:db8::2 icmp router
+fakehost add tap1 fe80::2 icmp
+# ping ipv6 default gateway global
+# ping 2001:db8::2
+ping fe80::1%tap1
+
+ip -6 route add ::/0 via fe80::1 dev tap1
+ifconfig tap0 up promisc
+
+# start droptrace for diagnostics
+mkdir -p /sys/kernel
+droptrace start
+
+echo 1 >/proc/sys/net/ipv4/ip_forward
+echo 1 >/proc/sys/net/ipv6/conf/all/forwarding
+
+run /mnt/host/test-harness/tests/basic/test.run
+
+

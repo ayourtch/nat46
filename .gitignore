@@ -1,0 +1,12 @@
+test-harness/test-data/captured/*
+test-harness/myinit
+test-harness/initrd.gz
+test-harness/initrd/
+test-harness/my-kernel
+
+nat46/modules/.*
+nat46/modules/nat46.mod*
+nat46/modules/Module.symvers
+nat46/modules/modules.order
+nat46/modules/*.o
+nat46/modules/*.ko

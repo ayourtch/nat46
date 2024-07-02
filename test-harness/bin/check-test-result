@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eux
+TESTNAME=$1
+
+rm -f /tmp/expected.jsonl
+rm -f /tmp/captured.jsonl
+
+
+jq 'del(.timestamp_us)' test-data/expected/${TESTNAME}.jsonl >/tmp/expected.jsonl
+jq 'del(.timestamp_us)' test-data/captured/${TESTNAME}.jsonl >/tmp/captured.jsonl
+
+diff -c /tmp/expected.jsonl /tmp/captured.jsonl
+
