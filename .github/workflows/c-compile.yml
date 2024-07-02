@@ -14,3 +14,12 @@ jobs:
       run: |
         cd nat46/modules
         KCPPFLAGS='-DNAT46_VERSION=\"test\" -Werror' make
+    - name: Install kvm
+      run: |
+        sudo apt-get install qemu-system-x86
+    - name: Install and run test harness
+      run: |
+        cd test-harness
+        ./run-test-harness
+
+

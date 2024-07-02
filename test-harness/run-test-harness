@@ -1,0 +1,105 @@
+#!/bin/bash
+set -eux
+
+# latest tag for https://github.com/ayourtch/nat46-kvm-test-harness/
+MYINIT_VERSION="v0.0.10"
+
+find_kernel_and_modules() {
+    local kernel_version=$(uname -r)
+    
+    # Potential kernel paths
+    local potential_kernel_paths=(
+        "/boot/vmlinuz-${kernel_version}"
+        "/boot/vmlinux-${kernel_version}"
+        "/boot/linux-${kernel_version}"
+    )
+
+    # Potential module path locations
+    local potential_module_paths=(
+        "/lib/modules/${kernel_version}"
+        "/usr/lib/modules/${kernel_version}"
+        "/usr/local/lib/modules/${kernel_version}"
+    )
+
+    local kernel_file=""
+    for path in "${potential_kernel_paths[@]}"; do
+        if [ -f "$path" ]; then
+            kernel_file="$path"
+            break
+        fi
+    done
+
+    local module_path=""
+    for path in "${potential_module_paths[@]}"; do
+        if [ -d "$path" ]; then
+            module_path="$path"
+            break
+        fi
+    done
+
+    if [ -z "$kernel_file" ]; then
+        echo "Error: Could not find kernel file for version ${kernel_version}" >&2
+        return 1
+    fi
+
+    if [ -z "$module_path" ]; then
+        echo "Error: Could not find module directory for version ${kernel_version}" >&2
+        return 1
+    fi
+
+    # Export environment variables
+    export KERNEL_FILE="$kernel_file"
+    export KERNEL_MODULE_PATH="$module_path"
+
+    # Print out for verification
+    echo "Kernel File: $KERNEL_FILE"
+    echo "Kernel Module Path: $KERNEL_MODULE_PATH"
+}
+
+find_kernel_and_modules
+
+# download myinit - if doing local tests, feel free to make a symlink
+[ -e myinit ] || (wget https://github.com/ayourtch/nat46-kvm-test-harness/releases/download/${MYINIT_VERSION}/myinit && chmod +x myinit)
+
+# build the initrd
+rm -rf initrd && mkdir initrd
+find ${KERNEL_MODULE_PATH} -name "netfs.ko*" -exec cp {} initrd/ \;
+find ${KERNEL_MODULE_PATH} -name "9pnet.ko*" -exec cp {} initrd/ \;
+find ${KERNEL_MODULE_PATH} -name "9pnet_virtio.ko*" -exec cp {} initrd/ \;
+find ${KERNEL_MODULE_PATH} -name "9p.ko*" -exec cp {} initrd/ \;
+find ${KERNEL_MODULE_PATH} -name "nf_defrag_ipv6.ko*" -exec cp {} initrd/ \;
+
+# copy the nat46 module from the repo
+find .. -name nat46.ko -exec cp {} initrd/ \;
+
+cp myinit initrd/init
+( cd initrd/ && find . | cpio -o -H newc ) | gzip > initrd.gz
+
+export HOST_SRC_PATH=$(git rev-parse --show-toplevel)
+
+[ -f my-kernel ] || (sudo cp ${KERNEL_FILE} my-kernel && sudo chmod 644 my-kernel)
+
+kvm -kernel my-kernel \
+  -initrd initrd.gz \
+  -net nic,model=virtio,macaddr=52:54:00:12:34:56 \
+  -net user,hostfwd=tcp:127.0.0.1:4444-:22 \
+  -append 'console=hvc0' \
+  -chardev stdio,id=stdio,mux=on,signal=off \
+  -device virtio-serial-pci \
+  -device virtconsole,chardev=stdio \
+  -mon chardev=stdio \
+  -display none \
+  -fsdev local,id=fs1,path=${HOST_SRC_PATH},security_model=none \
+  -s \
+  -device virtio-9p-pci,fsdev=fs1,mount_tag=host-code
+
+
+# collect the test names
+cd tests
+ALL_TESTS=$(ls)
+cd ..
+
+# verify that all the tests are matching the expectations
+for t in $ALL_TESTS; do
+  bin/check-test-result $t
+done
