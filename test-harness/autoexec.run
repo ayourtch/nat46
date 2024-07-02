@@ -1,0 +1,6 @@
+# This is not a shell script. This is a script, to be interpreted by
+# the test harness, whose source is at https://github.com/ayourtch/nat46-kvm-test-harness
+echo RUN: autoexec
+echo Hello from kvm >/mnt/host/hello.txt
+
+echo ENDRUN
