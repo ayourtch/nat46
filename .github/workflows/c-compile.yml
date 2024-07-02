@@ -14,3 +14,10 @@ jobs:
       run: |
         cd nat46/modules
         KCPPFLAGS='-DNAT46_VERSION=\"test\" -Werror' make
+    - name: Install arkade
+      uses: alexellis/setup-arkade@v2
+    - name: Install firecracker
+      run: |
+        sudo arkade system install firecracker
+    - name: Run microVM
+      run: sudo -E ./run-vm.sh
