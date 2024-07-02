@@ -240,6 +240,13 @@ static void __net_exit nat46_ns_exit(struct net *net)
 	}
 }
 
+static struct pernet_operations nat46_netops = {
+  .init = nat46_ns_init,
+  .exit = nat46_ns_exit,
+  .id = &nat46_netid,
+  .size = sizeof(struct nat46_nsdata),
+};
+
 static int __init nat46_init(void)
 {
 	int ret = 0;
