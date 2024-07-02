@@ -1,16 +1,13 @@
-name: C/C++ CI
-
 on:
   # push
   # pull_request
   workflow_dispatch
-  
+
+name: C/C++ CI prototype
   
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v2
     - name: build the NAT46 module
