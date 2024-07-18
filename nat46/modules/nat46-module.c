@@ -240,7 +240,7 @@ static void __net_exit nat46_ns_exit(struct net *net)
 	}
 }
 
-static struct pernet_operations nat46_netops = {
+static struct pernet_operations nat46_net_ops = {
   .init = nat46_ns_init,
   .exit = nat46_ns_exit,
   .id = &nat46_netid,
@@ -252,7 +252,7 @@ static int __init nat46_init(void)
 	int ret = 0;
 
 	printk("nat46: module (version %s) loaded.\n", NAT46_VERSION);
-	ret = register_pernet_subsys(&nat46_netops);
+	ret = register_pernet_subsys(&nat46_net_ops);
 	if(ret) {
 		goto error;
 	}
@@ -264,7 +264,7 @@ error:
 
 static void __exit nat46_exit(void)
 {
-	unregister_pernet_subsys(&nat46_netops);
+	unregister_pernet_subsys(&nat46_net_ops);
 	printk("nat46: module unloaded.\n");
 }
 
