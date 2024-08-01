@@ -94,7 +94,7 @@ static int nat46_proc_show(struct seq_file *m, void *v)
 {
 	struct net *net;
 
-	net = (struct net *)v;
+	net = (struct net *)m->private;
 	nat64_show_all_configs(net, m);
 	return 0;
 }
