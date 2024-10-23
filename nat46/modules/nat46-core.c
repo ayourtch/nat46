@@ -1766,6 +1766,11 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomi
       struct udphdr *udp = udp_hdr(skb);
       unsigned udplen = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* UDP hdr + payload */
 
+      if ((udp->check == 0) && zero_csum_pass) {
+         /* zero checksum and the config to pass it is set - do nothing with it */
+         break;
+      }
+
       oldsum = udp->check;
       udp->check = 0;
 
