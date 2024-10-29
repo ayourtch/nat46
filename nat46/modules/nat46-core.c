@@ -1007,6 +1007,7 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
         /* zero checksum and the config to pass it is set - do nothing with it */
         break;
       }
+      /* pretend checksum is correct not null */
       sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, infrag_payload_len, NEXTHDR_UDP, udp->check);
       sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, infrag_payload_len, NEXTHDR_UDP, sum1); /* add pseudoheader */
       if(ul_sum) {
@@ -1671,9 +1672,12 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
       case NEXTHDR_UDP: {
         struct udphdr *udp = add_offset(ip6h, v6packet_l3size);
         u16 sum1, sum2;
-        if ((udp->check == 0) && zero_csum_pass) {
-          /* zero checksum and the config to pass it is set - do nothing with it */
-          break;
+        if (udp->check == 0) {
+          if (zero_csum_pass) {
+            /* zero checksum and the config to pass it is set - do nothing with it */
+            break;
+          }
+          ip6_update_csum(old_skb, ip6h, ip6h->nexthdr == NEXTHDR_FRAGMENT); /* recalculate checksum before adjusting */
         }
         sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_UDP, udp->check);
         sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, l3_infrag_payload_len, NEXTHDR_UDP, sum1);
@@ -1767,8 +1771,17 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomi
       unsigned udplen = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* UDP hdr + payload */
 
       if ((udp->check == 0) && zero_csum_pass) {
-         /* zero checksum and the config to pass it is set - do nothing with it */
-         break;
+        /* zero checksum and the config to pass it is set - do nothing with it */
+        break;
+      }
+
+      if (do_atomic_frag) {
+        if ((udp->check == 0) && !zero_csum_pass) {
+          /*
+           * Checksum will still be broken if we don't have full payload
+           * since we can't do the full calculation in this case.
+           */
+        }
       }
 
       oldsum = udp->check;
