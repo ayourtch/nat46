@@ -29,7 +29,7 @@
 #include "nat46-core.h"
 #include "nat46-module.h"
 
-void
+static void
 nat46debug_dump(nat46_instance_t *nat46, int level, void *addr, int len)
 {
   char tohex[] = "0123456789ABCDEF";
@@ -118,7 +118,7 @@ char *get_next_arg(char **ptail) {
  * Parse an IPv6 address (if pref_len is NULL), or prefix (if it isn't).
  * parses destructively (places \0 between address and prefix len)
  */
-int try_parse_ipv6_prefix(struct in6_addr *pref, int *pref_len, char *arg) {
+static int try_parse_ipv6_prefix(struct in6_addr *pref, int *pref_len, char *arg) {
   int err = 0;
   char *arg_plen = strchr(arg, '/');
   if (arg_plen) {
@@ -131,7 +131,7 @@ int try_parse_ipv6_prefix(struct in6_addr *pref, int *pref_len, char *arg) {
   return err;
 }
 
-int try_parse_ipv4_prefix(u32 *v4addr, int *pref_len, char *arg) {
+static int try_parse_ipv4_prefix(u32 *v4addr, int *pref_len, char *arg) {
   int err = 0;
   char *arg_plen = strchr(arg, '/');
   if (arg_plen) {
@@ -151,7 +151,7 @@ int try_parse_ipv4_prefix(u32 *v4addr, int *pref_len, char *arg) {
  * destructive.
  */
 
-int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
+static int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **ptail) {
   int err = 0;
   char *val = get_next_arg(ptail);
   if (NULL == val) {
@@ -225,7 +225,7 @@ int nat46_set_config(nat46_instance_t *nat46, char *buf, int count) {
   return ret;
 }
 
-char *xlate_style_to_string(nat46_xlate_style_t style) {
+static char *xlate_style_to_string(nat46_xlate_style_t style) {
   switch(style) {
     case NAT46_XLATE_NONE:
       return "NONE";
@@ -372,7 +372,7 @@ From RFC6052, section 2.2:
 
 ********************************************************************/
 
-void xlate_v4_to_nat64(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6) {
+static void xlate_v4_to_nat64(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6) {
   char *ipv4 = pipv4;
   char *ipv6 = pipv6;
 
@@ -413,7 +413,7 @@ void xlate_v4_to_nat64(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   }
 }
 
-int xlate_nat64_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
+static int xlate_nat64_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
   char *ipv4 = pipv4;
   char *ipv6 = pipv6;
   int cmp = -1;
@@ -597,7 +597,7 @@ bitarray_copy(const void *src_org, int src_offset, int src_len,
     }
 }
 
-int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t *pl4id, int map_version) {
+static int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t *pl4id, int map_version) {
   int ret = 0;
   u32 *pv4u32 = pipv4;
   uint8_t *p6 = pipv6;
@@ -699,7 +699,7 @@ int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   return ret;
 }
 
-int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, int version) {
+static int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4, int version) {
   uint8_t v4_lsb_bits_len = 32 - rule->v4_pref_len;
 
   if (memcmp(pipv6, &rule->v6_pref, rule->v6_pref_len/8)) {
@@ -734,7 +734,7 @@ int xlate_map_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *
   return 1;
 }
 
-int xlate_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t *pl4id) {
+static int xlate_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv4, void *pipv6, uint16_t *pl4id) {
   int ret = 0;
   switch(rule->style) {
     case NAT46_XLATE_NONE: /* always fail unless it is a host 1:1 translation */
@@ -759,7 +759,7 @@ int xlate_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv
   return ret;
 }
 
-int xlate_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
+static int xlate_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv6, void *pipv4) {
   int ret = 0;
   switch(rule->style) {
     case NAT46_XLATE_NONE: /* always fail unless it is a host 1:1 translation */
@@ -782,7 +782,7 @@ int xlate_v6_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, void *pipv
   return ret;
 }
 
-__sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
+static __sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
   u32 s;
   csum = ntohs(~csum);
   s = (u32)csum + ntohs(~old) + ntohs(new);
@@ -793,7 +793,7 @@ __sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
 
 /* Add the TCP/UDP pseudoheader, basing on the existing checksum */
 
-__sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, u32 len,
+static __sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, u32 len,
                   unsigned char proto, u16 csum) {
   u16 *pdata;
   u16 len0, len1;
@@ -814,7 +814,7 @@ __sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, u32 len,
 }
 
 /* Undo the IPv6 pseudoheader inclusion into the checksum */
-__sum16 csum_ipv6_unmagic(nat46_instance_t *nat46, const struct in6_addr *saddr,
+static __sum16 csum_ipv6_unmagic(nat46_instance_t *nat46, const struct in6_addr *saddr,
                         const struct in6_addr *daddr,
                         __u32 len, unsigned short proto,
                         __sum16 csum) {
@@ -841,7 +841,7 @@ __sum16 csum_ipv6_unmagic(nat46_instance_t *nat46, const struct in6_addr *saddr,
 }
 
 /* Update ICMPv6 type/code with incremental checksum adjustment */
-void update_icmp6_type_code(nat46_instance_t *nat46, struct icmp6hdr *icmp6h, u8 type, u8 code) {
+static void update_icmp6_type_code(nat46_instance_t *nat46, struct icmp6hdr *icmp6h, u8 type, u8 code) {
   u16 old_tc = *((u16 *)icmp6h);
   u16 new_tc;
   u16 old_csum = icmp6h->icmp6_cksum;
@@ -856,22 +856,22 @@ void update_icmp6_type_code(nat46_instance_t *nat46, struct icmp6hdr *icmp6h, u8
 }
 
 
-u16 get_next_ip_id(void) {
+static u16 get_next_ip_id(void) {
   static u16 id = 0;
   return id++;
 }
 
-u16 fold_ipv6_frag_id(u32 v6id) {
+static u16 fold_ipv6_frag_id(u32 v6id) {
   return ((0xffff & (v6id >> 16)) ^ (v6id & 0xffff));
 }
 
-void *add_offset(void *ptr, u16 offset) {
+static void *add_offset(void *ptr, u16 offset) {
   return (((char *)ptr)+offset);
 }
 
 
 /* FIXME: traverse the headers properly */
-void *get_next_header_ptr6(void *pv6, int v6_len) {
+static void *get_next_header_ptr6(void *pv6, int v6_len) {
   struct ipv6hdr *ip6h = pv6;
   void *ret = (ip6h+1);
 
@@ -885,7 +885,7 @@ void *get_next_header_ptr6(void *pv6, int v6_len) {
   return ret;
 }
 
-void fill_v4hdr_from_v6hdr(struct iphdr * iph, struct ipv6hdr *ip6h, __u32 v4saddr, __u32 v4daddr, __u16 id, __u16 frag_off, __u16 proto, int l3_payload_len) {
+static void fill_v4hdr_from_v6hdr(struct iphdr * iph, struct ipv6hdr *ip6h, __u32 v4saddr, __u32 v4daddr, __u16 id, __u16 frag_off, __u16 proto, int l3_payload_len) {
   iph->ttl = ip6h->hop_limit;
   iph->saddr = v4saddr;
   iph->daddr = v4daddr;
@@ -898,7 +898,7 @@ void fill_v4hdr_from_v6hdr(struct iphdr * iph, struct ipv6hdr *ip6h, __u32 v4sad
   iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
 }
 
-u16 unchecksum16(void *p, int count, u16 csum) {
+static u16 unchecksum16(void *p, int count, u16 csum) {
   u16 *pu16 = p;
   int i = count;
   while(i--) {
@@ -907,7 +907,7 @@ u16 unchecksum16(void *p, int count, u16 csum) {
   return csum;
 }
 
-u16 rechecksum16(void *p, int count, u16 csum) {
+static u16 rechecksum16(void *p, int count, u16 csum) {
   u16 *pu16 = p;
   int i = count;
   while(i--) {
@@ -917,11 +917,11 @@ u16 rechecksum16(void *p, int count, u16 csum) {
 }
 
 /* Last rule in group must not have "none" as either source or destination */
-int is_last_pair_in_group(nat46_xlate_rulepair_t *apair) {
+static int is_last_pair_in_group(nat46_xlate_rulepair_t *apair) {
   return ( (apair->local.style != NAT46_XLATE_NONE) && (apair->remote.style != NAT46_XLATE_NONE) );
 }
 
-void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, __u32 *pv4saddr, __u32 *pv4daddr) {
+static void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, __u32 *pv4saddr, __u32 *pv4daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
   int xlate_src = -1;
@@ -959,7 +959,7 @@ void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, _
  * Translate this header and attempt to extract the sport/dport
  * so the callers can use them for translation as well.
  */
-int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int v6_len, u16 *ul_sum, int *ptailTruncSize) {
+static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int v6_len, u16 *ul_sum, int *ptailTruncSize) {
   struct ipv6hdr *ip6h = pv6;
   __u32 v4saddr, v4daddr;
   struct iphdr new_ipv4;
@@ -1049,12 +1049,12 @@ int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int
   return (v6_len - IPV6V4HDRDELTA);
 }
 
-u8 *icmp_parameter_ptr(struct icmphdr *icmph) {
+static u8 *icmp_parameter_ptr(struct icmphdr *icmph) {
   u8 *icmp_pptr = ((u8 *)(icmph))+4;
   return icmp_pptr;
 }
 
-u32 *icmp6_parameter_ptr(struct icmp6hdr *icmp6h) {
+static u32 *icmp6_parameter_ptr(struct icmp6hdr *icmp6h) {
   u32 *icmp6_pptr = ((u32 *)(icmp6h))+1;
   return icmp6_pptr;
 }
@@ -1282,7 +1282,7 @@ static void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, str
 }
 
 
-int ip6_input_not_interested(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
+static int ip6_input_not_interested(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct sk_buff *old_skb) {
   if (old_skb->protocol != htons(ETH_P_IPV6)) {
     nat46debug(3, "Not an IPv6 packet");
     return 1;
@@ -1533,7 +1533,7 @@ static uint16_t nat46_fixup_icmp(nat46_instance_t *nat46, struct iphdr *iph, str
   return ret;
 }
 
-int pairs_xlate_v6_to_v4_outer(nat46_instance_t *nat46, struct ipv6hdr *ip6h, uint16_t proto, __u32 *pv4saddr, __u32 *pv4daddr) {
+static int pairs_xlate_v6_to_v4_outer(nat46_instance_t *nat46, struct ipv6hdr *ip6h, uint16_t proto, __u32 *pv4saddr, __u32 *pv4daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
   int xlate_src = -1;
@@ -1743,7 +1743,7 @@ done:
 
 
 
-void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomic_frag)
+static void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomic_frag)
 {
   u32 sum1=0;
   u16 sum2=0;
@@ -1767,8 +1767,8 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomi
       unsigned udplen = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* UDP hdr + payload */
 
       if ((udp->check == 0) && zero_csum_pass) {
-         /* zero checksum and the config to pass it is set - do nothing with it */
-         break;
+        /* zero checksum and the config to pass it is set - do nothing with it */
+        break;
       }
 
       oldsum = udp->check;
@@ -1797,7 +1797,7 @@ void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomi
     }
 }
 
-int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
+static int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
   if (old_skb->protocol != htons(ETH_P_IP)) {
     nat46debug(3, "Not an IPv4 packet");
     return 1;
@@ -1806,7 +1806,7 @@ int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, struct 
   return 0;
 }
 
-int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr4, uint16_t *sport, uint16_t *dport, void *v6saddr, void *v6daddr) {
+static int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr4, uint16_t *sport, uint16_t *dport, void *v6saddr, void *v6daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
   int xlate_src = -1;

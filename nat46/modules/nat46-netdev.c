@@ -27,6 +27,14 @@
 #include "nat46-core.h"
 #include "nat46-module.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+#define dev_lock_list() rcu_read_lock()
+#define dev_unlock_list() rcu_read_unlock()
+#else
+#define dev_lock_list() read_lock(&dev_base_lock)
+#define dev_unlock_list() read_unlock(&dev_base_lock)
+#endif
+
 #define NETDEV_DEFAULT_NAME "nat46."
 
 typedef struct {
@@ -110,11 +118,15 @@ static void nat46_netdev_setup(struct net_device *dev)
 	dev->hard_header_len = 0;
 	dev->addr_len = 0;
 	dev->mtu = 16384; /* iptables does reassembly. Rather than using ETH_DATA_LEN, let's try to get as much mileage as we can with the Linux stack */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,12,0)
 	dev->features = NETIF_F_NETNS_LOCAL;
+#else
+	dev->netns_local = true;
+#endif
 	dev->flags = IFF_NOARP | IFF_POINTOPOINT;
 }
 
-int nat46_netdev_create(struct net *net, char *basename, struct net_device **dev)
+static int nat46_netdev_create(struct net *net, char *basename, struct net_device **dev)
 {
 	int ret = 0;
 	char *devname = NULL;
@@ -170,7 +182,7 @@ err:
 	return ret;
 }
 
-void nat46_netdev_destroy(struct net_device *dev)
+static void nat46_netdev_destroy(struct net_device *dev)
 {
 	dev->flags &= ~IFF_UP;
 	netif_stop_queue(dev);
@@ -193,7 +205,7 @@ static struct net_device *find_dev(struct net *net, char *name) {
 		return NULL;
 	}
 
-	read_lock(&dev_base_lock);
+	dev_lock_list();
 	dev = first_net_device(net);
 	while (dev) {
 		if((0 == strcmp(dev->name, name)) && is_nat46(dev)) {
@@ -205,7 +217,7 @@ static struct net_device *find_dev(struct net *net, char *name) {
 		}
 		dev = next_net_device(dev);
 	}
-	read_unlock(&dev_base_lock);
+	dev_unlock_list();
 	return out;
 }
 
@@ -300,7 +312,7 @@ int nat46_remove(struct net *net, char *devname, char *buf) {
 
 void nat64_show_all_configs(struct net *net, struct seq_file *m) {
         struct net_device *dev;
-	read_lock(&dev_base_lock);
+	dev_lock_list();
 	dev = first_net_device(net);
 	while (dev) {
 		if(is_nat46(dev)) {
@@ -323,7 +335,7 @@ void nat64_show_all_configs(struct net *net, struct seq_file *m) {
 		}
 		dev = next_net_device(dev);
 	}
-	read_unlock(&dev_base_lock);
+	dev_unlock_list();
 
 }
 
@@ -331,7 +343,7 @@ void nat46_destroy_all(struct net *net) {
         struct net_device *dev;
         struct net_device *nat46dev;
 	do {
-		read_lock(&dev_base_lock);
+		dev_lock_list();
 		nat46dev = NULL;
 		dev = first_net_device(net);
 		while (dev) {
@@ -340,7 +352,7 @@ void nat46_destroy_all(struct net *net) {
 			}
 			dev = next_net_device(dev);
 		}
-		read_unlock(&dev_base_lock);
+		dev_unlock_list();
 		if(nat46dev) {
 			nat46_netdev_destroy(nat46dev);
 		}
