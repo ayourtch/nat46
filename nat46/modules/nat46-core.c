@@ -16,9 +16,13 @@
  *
  */
 
-#include <net/route.h>
-#include <net/ipv6_frag.h>
 #include <linux/version.h>
+#include <net/route.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0)
+#include <net/ipv6.h>
+#else
+#include <net/ipv6_frag.h>
+#endif
 #if IS_ENABLED(CONFIG_NF_CONNTRACK)
 #include <net/netfilter/nf_conntrack.h>
 #endif
@@ -282,7 +286,11 @@ int nat46_get_config(nat46_instance_t *nat46, char *buf, int count) {
  * value if 'skb' is freed.
  */
 static int try_reassembly(struct sk_buff *old_skb) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,3,0)
   u16 zone_id = NF_CT_DEFAULT_ZONE_ID;
+#else
+  u16 zone_id = NF_CT_DEFAULT_ZONE;
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
   struct net *net = dev_net(old_skb->dev);
 #else
@@ -291,11 +299,19 @@ static int try_reassembly(struct sk_buff *old_skb) {
   int err;
 
 #if IS_ENABLED(CONFIG_NF_CONNTRACK)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
   if (skb_nfct(old_skb)) {
+#else
+  if (old_skb->nfct) {
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,3,0)
     enum ip_conntrack_info ctinfo;
     const struct nf_conn *ct = nf_ct_get(old_skb, &ctinfo);
 
     zone_id = nf_ct_zone_id(nf_ct_zone(ct), CTINFO2DIR(ctinfo));
+#else
+    zone_id = nf_ct_zone((struct nf_conn *)old_skb->nfct);
+#endif
   }
 #endif
 
