@@ -149,7 +149,8 @@ static int nat46_netdev_create(struct net *net, char *basename, struct net_devic
 		snprintf(devname, strlen(NETDEV_DEFAULT_NAME)+3, "%s%d", NETDEV_DEFAULT_NAME, netdev_count);
 		netdev_count++;
 	} else {
-		strcpy(devname, basename);
+		/* coverity[dont_call] false positive + ignore */
+		strcpy(devname, basename); /* In this particular case, we allocate the destination based on the source length, so the strcpy will be safe by construction - destination always has enough size to take the source in */
 	}
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(3,17,0)
