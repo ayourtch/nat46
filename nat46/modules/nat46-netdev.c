@@ -149,7 +149,7 @@ static int nat46_netdev_create(struct net *net, char *basename, struct net_devic
 		snprintf(devname, strlen(NETDEV_DEFAULT_NAME)+3, "%s%d", NETDEV_DEFAULT_NAME, netdev_count);
 		netdev_count++;
 	} else {
-		strcpy(devname, basename);
+		snprintf(devname, strlen(basename)+1, "%s", basename);
 	}
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(3,17,0)
