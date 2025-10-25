@@ -71,8 +71,7 @@ cp myinit initrd/init
 
 export HOST_SRC_PATH=$(git rev-parse --show-toplevel)
 
-sudo cp ${KERNEL_FILE} my-kernel
-sudo chmod 644 my-kernel
+[ -f my-kernel ] || (sudo cp ${KERNEL_FILE} my-kernel && sudo chmod 644 my-kernel)
 
 kvm -kernel my-kernel \
   -initrd initrd.gz \
