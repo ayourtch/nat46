@@ -73,7 +73,7 @@ export HOST_SRC_PATH=$(git rev-parse --show-toplevel)
 
 [ -f my-kernel ] || (sudo cp ${KERNEL_FILE} my-kernel && sudo chmod 644 my-kernel)
 
-sudo kvm -kernel my-kernel \
+kvm -kernel my-kernel \
   -initrd initrd.gz \
   -net nic,model=virtio,macaddr=52:54:00:12:34:56 \
   -net user,hostfwd=tcp:127.0.0.1:4444-:22 \
