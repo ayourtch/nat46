@@ -195,7 +195,11 @@ static void nat46_netdev_destroy(struct net_device *dev)
 }
 
 static int is_nat46(struct net_device *dev) {
-	nat46_netdev_priv_t *priv = netdev_priv(dev);
+	nat46_netdev_priv_t *priv;
+	if (dev->netdev_ops != &nat46_netdev_ops) {
+		return 0;
+	}
+	priv = netdev_priv(dev);
 	return (priv && (NAT46_DEVICE_SIGNATURE == priv->sig));
 }
 
