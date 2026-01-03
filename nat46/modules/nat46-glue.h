@@ -28,5 +28,5 @@
 #define IP6_OFFSET      0xFFF8
 #endif
 
-#define assert(x) printk("Assertion failed: %s", #x)
+#define assert(x) pr_emerg("Assertion failed: %s", #x)
 

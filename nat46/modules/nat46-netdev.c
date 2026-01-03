@@ -141,7 +141,7 @@ static int nat46_netdev_create(struct net *net, char *basename, struct net_devic
 		automatic_name = 1;
 	}
 	if (!devname) {
-		printk("nat46: can not allocate memory to store device name.\n");
+		pr_err("nat46: can not allocate memory to store device name.\n");
 		ret = -ENOMEM;
 		goto err;
 	}
@@ -158,7 +158,7 @@ static int nat46_netdev_create(struct net *net, char *basename, struct net_devic
 	*dev = alloc_netdev(sizeof(nat46_instance_t), devname, NET_NAME_UNKNOWN, nat46_netdev_setup);
 #endif
 	if (!*dev) {
-		printk("nat46: Unable to allocate nat46 device '%s'.\n", devname);
+		pr_err("nat46: Unable to allocate nat46 device '%s'.\n", devname);
 		ret = -ENOMEM;
 		goto err_alloc_dev;
 	}
@@ -166,12 +166,12 @@ static int nat46_netdev_create(struct net *net, char *basename, struct net_devic
 	dev_net_set(*dev, net);
 	ret = register_netdev(*dev);
 	if(ret) {
-		printk("nat46: Unable to register nat46 device.\n");
+		pr_err("nat46: Unable to register nat46 device.\n");
 		ret = -ENOMEM;
 		goto err_register_dev;
 	}
 
-	printk("nat46: netdevice nat46 '%s' created successfully.\n", devname);
+	pr_info("nat46: netdevice nat46 '%s' created successfully.\n", devname);
 	kfree(devname);
 
 	return 0;
@@ -191,7 +191,7 @@ static void nat46_netdev_destroy(struct net_device *dev)
 	netdev_nat46_set_instance(dev, NULL);
 	unregister_netdev(dev);
 	free_netdev(dev);
-	printk("nat46: Destroying nat46 device.\n");
+	pr_info("nat46: Destroying nat46 device.\n");
 }
 
 static int is_nat46(struct net_device *dev) {
@@ -216,7 +216,7 @@ static struct net_device *find_dev(struct net *net, char *name) {
 	while (dev) {
 		if((0 == strcmp(dev->name, name)) && is_nat46(dev)) {
 			if(debug) {
-				printk(KERN_INFO "found [%s]\n", dev->name);
+				pr_info("found [%s]\n", dev->name);
 			}
 			out = dev;
 			break;
@@ -231,7 +231,7 @@ int nat46_create(struct net *net, char *devname) {
 	int ret = 0;
 	struct net_device *dev = find_dev(net, devname);
 	if (dev) {
-		printk("Can not add: device '%s' already exists!\n", devname);
+		pr_err("Can not add: device '%s' already exists!\n", devname);
 		return -1;
 	}
 	ret = nat46_netdev_create(net, devname, &dev);
@@ -241,11 +241,11 @@ int nat46_create(struct net *net, char *devname) {
 int nat46_destroy(struct net *net, char *devname) {
 	struct net_device *dev = find_dev(net, devname);
 	if(dev) {
-		printk("Destroying '%s'\n", devname);
+		pr_info("Destroying '%s'\n", devname);
 		nat46_netdev_destroy(dev);
 		return 0;
 	} else {
-		printk("Could not find device '%s'\n", devname);
+		pr_err("Could not find device '%s'\n", devname);
 		return -1;
 	}
 }
@@ -260,7 +260,7 @@ int nat46_insert(struct net *net, char *devname, char *buf) {
 			netdev_nat46_set_instance(dev, nat46_new);
 			ret = nat46_set_ipair_config(nat46_new, 0, buf, strlen(buf));
 		} else {
-			printk("Could not insert a new rule on device %s\n", devname);
+			pr_err("Could not insert a new rule on device %s\n", devname);
 		}
 	}
 	return ret;
@@ -307,7 +307,7 @@ int nat46_remove(struct net *net, char *devname, char *buf) {
 				netdev_nat46_set_instance(dev, nat46_new);
 				ret = 0;
 			} else {
-				printk("Could not remove the rule from device %s\n", devname);
+				pr_err("Could not remove the rule from device %s\n", devname);
 			}
 			break;
 		}
