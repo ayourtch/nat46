@@ -115,8 +115,7 @@ static char *get_devname(char **ptail)
 	const int maxlen = IFNAMSIZ-1;
 	char *devname = get_next_arg(ptail);
 	if(devname && (strlen(devname) > maxlen)) {
-		printk(KERN_INFO "nat46: '%s' is "
-			"longer than %d chars, truncating\n", devname, maxlen);
+		pr_info("nat46: '%s' is longer than %d chars, truncating\n", devname, maxlen);
 		devname[maxlen] = 0;
 	}
 	return devname;
@@ -152,31 +151,31 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 	while (NULL != (arg_name = get_next_arg(&tail))) {
 		if (0 == strcmp(arg_name, "add")) {
 			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: adding device (%s)\n", devname);
+			pr_info("nat46: adding device (%s)\n", devname);
 			mutex_lock(&add_del_lock);
 			nat46_create(net, devname);
 			mutex_unlock(&add_del_lock);
 		} else if (0 == strcmp(arg_name, "del")) {
 			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: deleting device (%s)\n", devname);
+			pr_info("nat46: deleting device (%s)\n", devname);
 			mutex_lock(&add_del_lock);
 			nat46_destroy(net, devname);
 			mutex_unlock(&add_del_lock);
 		} else if (0 == strcmp(arg_name, "config")) {
 			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: configure device (%s) with '%s'\n", devname, tail);
+			pr_info("nat46: configure device (%s) with '%s'\n", devname, tail);
 			mutex_lock(&add_del_lock);
 			nat46_configure(net, devname, tail);
 			mutex_unlock(&add_del_lock);
 		} else if (0 == strcmp(arg_name, "insert")) {
 			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: insert new rule into device (%s) with '%s'\n", devname, tail);
+			pr_info("nat46: insert new rule into device (%s) with '%s'\n", devname, tail);
 			mutex_lock(&add_del_lock);
 			nat46_insert(net, devname, tail);
 			mutex_unlock(&add_del_lock);
 		} else if (0 == strcmp(arg_name, "remove")) {
 			devname = get_devname(&tail);
-			printk(KERN_INFO "nat46: remove a rule from the device (%s) with '%s'\n", devname, tail);
+			pr_info("nat46: remove a rule from the device (%s) with '%s'\n", devname, tail);
 			mutex_lock(&add_del_lock);
 			nat46_remove(net, devname, tail);
 			mutex_unlock(&add_del_lock);
@@ -218,7 +217,7 @@ static int __net_init nat46_ns_init(struct net *net)
 		if(!nsdata->proc_entry) {
 			remove_proc_entry(NAT46_PROC_NAME, net->proc_net);
 			nsdata->proc_parent = NULL;
-			printk(KERN_INFO "Error creating proc entry");
+			pr_err("Error creating proc entry");
 			return -ENOMEM;
 		}
 	}
@@ -251,7 +250,7 @@ static int __init nat46_init(void)
 {
 	int ret = 0;
 
-	printk("nat46: module (version %s) loaded.\n", NAT46_VERSION);
+	pr_info("nat46: module (version %s) loaded.\n", NAT46_VERSION);
 	ret = register_pernet_subsys(&nat46_net_ops);
 	if(ret) {
 		goto error;
@@ -265,7 +264,7 @@ error:
 static void __exit nat46_exit(void)
 {
 	unregister_pernet_subsys(&nat46_net_ops);
-	printk("nat46: module unloaded.\n");
+	pr_info("nat46: module unloaded.\n");
 }
 
 module_init(nat46_init);

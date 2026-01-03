@@ -26,10 +26,10 @@ static int is_valid_nat46(nat46_instance_t *nat46) {
 nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int from_ipair, int to_ipair, int remove_ipair) {
   nat46_instance_t *nat46 = kzalloc(sizeof(nat46_instance_t) + npairs*sizeof(nat46_xlate_rulepair_t), GFP_KERNEL);
   if (!nat46) {
-    printk("[nat46] make_nat46_instance: can not alloc a nat46 instance with %d pairs\n", npairs);
+    pr_err("[nat46] make_nat46_instance: can not alloc a nat46 instance with %d pairs\n", npairs);
     return NULL;
   } else {
-    printk("[nat46] make_nat46_instance: allocated nat46 instance with %d pairs\n", npairs);
+    pr_info("[nat46] make_nat46_instance: allocated nat46 instance with %d pairs\n", npairs);
   }
   nat46->sig = NAT46_SIGNATURE;
   nat46->npairs = npairs;
@@ -57,7 +57,7 @@ nat46_instance_t *get_nat46_instance(struct sk_buff *sk) {
     return nat46;
   } else {
     spin_unlock_bh(&ref_lock);
-    printk("[nat46] get_nat46_instance: Could not find a valid NAT46 instance!");
+    pr_err("[nat46] get_nat46_instance: Could not find a valid NAT46 instance!");
     return NULL;
   }
 }
@@ -68,7 +68,7 @@ void release_nat46_instance(nat46_instance_t *nat46) {
   if(0 == nat46->refcount) {
     nat46->sig = FREED_NAT46_SIGNATURE;
     spin_unlock_bh(&ref_lock);
-    printk("[nat46] release_nat46_instance: freeing nat46 instance with %d pairs\n", nat46->npairs);
+    pr_info("[nat46] release_nat46_instance: freeing nat46 instance with %d pairs\n", nat46->npairs);
     kfree(nat46);
     return;
   }
