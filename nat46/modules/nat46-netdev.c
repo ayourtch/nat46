@@ -324,7 +324,11 @@ void nat64_show_all_configs(struct net *net, struct seq_file *m) {
 		if(is_nat46(dev)) {
 			nat46_instance_t *nat46 = netdev_nat46_instance(dev);
 			int ipair = -1;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+			char *buf = kmalloc(NAT46_CFG_BUFLEN + 1, GFP_ATOMIC);
+#else
 			char *buf = kmalloc(NAT46_CFG_BUFLEN + 1, GFP_KERNEL);
+#endif
 			seq_printf(m, "add %s\n", dev->name);
 			if(buf) {
 				for(ipair = 0; ipair < nat46->npairs; ipair++) {
