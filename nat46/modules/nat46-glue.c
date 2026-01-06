@@ -56,8 +56,8 @@ nat46_instance_t *get_nat46_instance(struct sk_buff *sk) {
     spin_unlock_bh(&ref_lock);
     return nat46;
   } else {
-    printk("[nat46] get_nat46_instance: Could not find a valid NAT46 instance!");
     spin_unlock_bh(&ref_lock);
+    printk("[nat46] get_nat46_instance: Could not find a valid NAT46 instance!");
     return NULL;
   }
 }
@@ -66,9 +66,11 @@ void release_nat46_instance(nat46_instance_t *nat46) {
   spin_lock_bh(&ref_lock);
   nat46->refcount--;
   if(0 == nat46->refcount) {
-    printk("[nat46] release_nat46_instance: freeing nat46 instance with %d pairs\n", nat46->npairs);
     nat46->sig = FREED_NAT46_SIGNATURE;
+    spin_unlock_bh(&ref_lock);
+    printk("[nat46] release_nat46_instance: freeing nat46 instance with %d pairs\n", nat46->npairs);
     kfree(nat46);
+    return;
   }
   spin_unlock_bh(&ref_lock);
 }
