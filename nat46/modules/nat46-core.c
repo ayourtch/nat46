@@ -2003,6 +2003,17 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
 
   nat46debug(5, "about to send v6 packet, flags: %02x",  IP6CB(new_skb)->flags);
   nat46_netdev_count_xmit(new_skb, old_skb->dev);
+
+  /* 
+   * Although the protocol stipulates that the intermediate routers prohibit
+   * fragmentation of IPv6 packets, we have done the translation from IPv4
+   * to IPv6 here. The IPv6 packets are created by nat46, so the nat46 can be
+   * regarded as the sender. If fragmentation is needed, let the network
+   * protocol stack does it.
+   */
+  if(0 == (ntohs(hdr4->frag_off) & 0x4000)) {
+    new_skb->local_df = 1;
+  }
   netif_rx(new_skb);
 
 done:
