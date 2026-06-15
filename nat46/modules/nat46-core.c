@@ -1618,6 +1618,9 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
 
   nat46debug(4, "nat46_ipv6_input packet");
 
+  if (!nat46) {
+    return err;
+  }
   if(ip6_input_not_interested(nat46, ip6h, old_skb)) {
     nat46debug(1, "nat46_ipv6_input not interested");
     goto done;
@@ -1885,6 +1888,9 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   memset(v6saddr, 1, 16);
   memset(v6daddr, 2, 16);
 
+  if (!nat46) {
+    return err;
+  }
   if (ip4_input_not_interested(nat46, hdr4, old_skb)) {
     goto done;
   }
