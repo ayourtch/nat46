@@ -1616,11 +1616,12 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
   int l3_infrag_payload_len = ntohs(ip6h->payload_len);
   int check_for_l4 = 0;
 
-  nat46debug(4, "nat46_ipv6_input packet");
-
   if (!nat46) {
     return err;
   }
+
+  nat46debug(4, "nat46_ipv6_input packet");
+
   if(ip6_input_not_interested(nat46, ip6h, old_skb)) {
     nat46debug(1, "nat46_ipv6_input not interested");
     goto done;
