@@ -1825,6 +1825,10 @@ static int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, 
     nat46debug(3, "Not an IPv4 packet");
     return 1;
   }
+  if (old_skb->len < sizeof(struct iphdr) || old_skb->len < ntohs(iph->tot_len) || (iph->ihl << 2) < sizeof(struct iphdr) || iph->version != 4) {
+    nat46debug(3, "Invalid IPv4 packet or truncated payload: %d", old_skb->len);
+    return 1;
+  }
   // FIXME: check source to be within our prefix
   return 0;
 }
@@ -1880,6 +1884,8 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   int check_for_l4 = 0;
   int having_l4 = 0;
   int add_frag_header = 0;
+  int v4packet_l3size = 0;
+  int l4_payload_len = 0;
 
   struct ipv6hdr * hdr6;
   struct iphdr * hdr4 = ip_hdr(old_skb);
@@ -1897,6 +1903,8 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   }
   nat46debug(1, "nat46_ipv4_input packet");
   nat46debug(5, "nat46_ipv4_input protocol: %d, len: %d, flags: %02x", hdr4->protocol, old_skb->len, IPCB(old_skb)->flags);
+  v4packet_l3size = hdr4->ihl << 2;
+  l4_payload_len = ntohs(hdr4->tot_len) - v4packet_l3size;
   if(0 == (ntohs(hdr4->frag_off) & 0x3FFF) ) {
     check_for_l4 = 1;
   } else if (IPPROTO_ICMP == hdr4->protocol) {
@@ -1909,6 +1917,8 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
       goto done;
     }
     hdr4 = ip_hdr(old_skb);
+    v4packet_l3size = hdr4->ihl << 2;
+    l4_payload_len = ntohs(hdr4->tot_len) - v4packet_l3size;
     check_for_l4 = 1;
   } else {
     add_frag_header = 1;
@@ -1920,23 +1930,39 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   if (check_for_l4) {
     switch(hdr4->protocol) {
       case IPPROTO_TCP: {
-	struct tcphdr *th = tcp_hdr(old_skb);
+	struct tcphdr *th;
+	if ((l4_payload_len < sizeof(*th)) || (old_skb->len < v4packet_l3size + sizeof(*th))) {
+	  nat46debug(0, "[nat46] Len short for v4 TCP header");
+	  goto done;
+	}
+	th = tcp_hdr(old_skb);
 	sport = th->source;
 	dport = th->dest;
 	having_l4 = 1;
 	break;
 	}
       case IPPROTO_UDP: {
-	struct udphdr *udp = udp_hdr(old_skb);
+	struct udphdr *udp;
+	if ((l4_payload_len < sizeof(*udp)) || (old_skb->len < v4packet_l3size + sizeof(*udp))) {
+	  nat46debug(0, "[nat46] Len short for v4 UDP header");
+	  goto done;
+	}
+	udp = udp_hdr(old_skb);
 	sport = udp->source;
 	dport = udp->dest;
 	having_l4 = 1;
 	break;
 	}
-      case IPPROTO_ICMP:
+      case IPPROTO_ICMP: {
+	struct icmphdr *icmph;
+	if ((l4_payload_len < sizeof(*icmph)) || (old_skb->len < v4packet_l3size + sizeof(*icmph))) {
+	  nat46debug(0, "[nat46] Len short for ICMPv4 header");
+	  goto done;
+	}
 	sport = dport = nat46_fixup_icmp(nat46, hdr4, old_skb);
 	having_l4 = 1;
 	break;
+	}
       default:
 	break;
     }
@@ -1971,9 +1997,9 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
 #endif
 
   /* expand header (add 20 extra bytes at the beginning of sk_buff) */
-  pskb_expand_head(new_skb, IPV6HDRSIZE - (hdr4->ihl << 2) + (add_frag_header?8:0), 0, GFP_ATOMIC);
+  pskb_expand_head(new_skb, IPV6HDRSIZE - v4packet_l3size + (add_frag_header?8:0), 0, GFP_ATOMIC);
 
-  skb_push(new_skb, IPV6HDRSIZE - (hdr4->ihl << 2) + (add_frag_header?8:0)); /* push boundary by extra 20 bytes */
+  skb_push(new_skb, IPV6HDRSIZE - v4packet_l3size + (add_frag_header?8:0)); /* push boundary by extra 20 bytes */
 
   skb_reset_network_header(new_skb);
   skb_set_transport_header(new_skb, IPV6HDRSIZE + (add_frag_header?8:0) ); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
@@ -1986,7 +2012,7 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   *(__be32 *)hdr6 = htonl(0x60000000 | (tclass << 20)) | flowlabel; /* version, priority, flowlabel */
 
   /* IPv6 length is a payload length, IPv4 is hdr+payload */
-  hdr6->payload_len = htons(ntohs(hdr4->tot_len) - (hdr4->ihl << 2) + (add_frag_header?8:0));
+  hdr6->payload_len = htons(l4_payload_len + (add_frag_header?8:0));
   hdr6->nexthdr = hdr4->protocol;
   hdr6->hop_limit = hdr4->ttl;
   memcpy(&hdr6->saddr, v6saddr, 16);
