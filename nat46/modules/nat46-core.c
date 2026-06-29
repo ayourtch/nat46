@@ -1304,8 +1304,8 @@ static int ip6_input_not_interested(nat46_instance_t *nat46, struct ipv6hdr *ip6
     nat46debug(3, "Not an IPv6 packet");
     return 1;
   }
-  if(old_skb->len < sizeof(struct ipv6hdr) || ip6h->version != 6) {
-    nat46debug(3, "Len short or not correct version: %d", ip6h->version);
+  if(old_skb->len < sizeof(struct ipv6hdr) || old_skb->len < ntohs(ip6h->payload_len) + sizeof(struct ipv6hdr) || ip6h->version != 6) {
+    nat46debug(3, "Invalid IPv6 packet or truncated payload: %d", old_skb->len);
     return 1;
   }
   if (!(ipv6_addr_type(&ip6h->saddr) & IPV6_ADDR_UNICAST)) {
@@ -1613,7 +1613,7 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
   int truncSize = 0;
   int tailTruncSize = 0;
   int v6packet_l3size = sizeof(*ip6h);
-  int l3_infrag_payload_len = ntohs(ip6h->payload_len);
+  int l3_infrag_payload_len = 0;
   int check_for_l4 = 0;
 
   if (!nat46) {
@@ -1628,9 +1628,17 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
   }
   nat46debug(5, "nat46_ipv6_input next hdr: %d, len: %d, is_fragment: %d",
                 ip6h->nexthdr, old_skb->len, ip6h->nexthdr == NEXTHDR_FRAGMENT);
+  l3_infrag_payload_len = ntohs(ip6h->payload_len);
   proto = ip6h->nexthdr;
   if (proto == NEXTHDR_FRAGMENT) {
-    struct frag_hdr *fh = (struct frag_hdr*)(ip6h + 1);
+    struct frag_hdr *fh;
+
+    if ((l3_infrag_payload_len < sizeof(struct frag_hdr)) || (old_skb->len < v6packet_l3size + sizeof(struct frag_hdr))) {
+      nat46debug(0, "[nat46] Len short for Fragment header");
+      goto done;
+    }
+
+    fh = (struct frag_hdr*)(ip6h + 1);
     v6packet_l3size += sizeof(struct frag_hdr);
     l3_infrag_payload_len -= sizeof(struct frag_hdr);
     nat46debug(2, "Fragment ID: %08X", fh->identification);
@@ -1685,15 +1693,26 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
     switch(proto) {
       /* CHECKSUMS UPDATE */
       case NEXTHDR_TCP: {
-        struct tcphdr *th = add_offset(ip6h, v6packet_l3size);
-        u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_TCP, th->check);
-        u16 sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, l3_infrag_payload_len, NEXTHDR_TCP, sum1);
+        struct tcphdr *th;
+        u16 sum1, sum2;
+        if ((l3_infrag_payload_len < sizeof(*th)) || (old_skb->len < v6packet_l3size + sizeof(*th))) {
+          nat46debug(0, "[nat46] Len short for v6 TCP header");
+          goto done;
+        }
+        th = add_offset(ip6h, v6packet_l3size);
+        sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_TCP, th->check);
+        sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, l3_infrag_payload_len, NEXTHDR_TCP, sum1);
         th->check = sum2;
         break;
         }
       case NEXTHDR_UDP: {
-        struct udphdr *udp = add_offset(ip6h, v6packet_l3size);
+        struct udphdr *udp;
         u16 sum1, sum2;
+        if ((l3_infrag_payload_len < sizeof(*udp)) || (old_skb->len < v6packet_l3size + sizeof(*udp))) {
+          nat46debug(0, "[nat46] Len short for v6 UDP header");
+          goto done;
+        }
+        udp = add_offset(ip6h, v6packet_l3size);
         if ((udp->check == 0) && zero_csum_pass) {
           /* zero checksum and the config to pass it is set - do nothing with it */
           break;
@@ -1704,8 +1723,14 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
         break;
         }
       case NEXTHDR_ICMP: {
-        struct icmp6hdr *icmp6h = add_offset(ip6h, v6packet_l3size);
-        u16 sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_ICMP, icmp6h->icmp6_cksum);
+        struct icmp6hdr *icmp6h;
+        u16 sum1;
+        if ((l3_infrag_payload_len < sizeof(*icmp6h)) || (old_skb->len < v6packet_l3size + sizeof(*icmp6h))) {
+          nat46debug(0, "[nat46] Len short for ICMPv6 header");
+          goto done;
+        }
+        icmp6h = add_offset(ip6h, v6packet_l3size);
+        sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_ICMP, icmp6h->icmp6_cksum);
         icmp6h->icmp6_cksum = sum1;
         nat46debug_dump(nat46, 10, icmp6h, l3_infrag_payload_len);
         nat46_fixup_icmp6(nat46, ip6h, icmp6h, old_skb, &tailTruncSize);
