@@ -1978,16 +1978,14 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
 	having_l4 = 1;
 	break;
 	}
-      case IPPROTO_ICMP: {
-	struct icmphdr *icmph;
-	if ((l4_payload_len < sizeof(*icmph)) || (old_skb->len < v4packet_l3size + sizeof(*icmph))) {
+      case IPPROTO_ICMP:
+	if ((l4_payload_len < sizeof(struct icmphdr)) || (old_skb->len < v4packet_l3size + sizeof(struct icmphdr))) {
 	  nat46debug(0, "[nat46] Len short for ICMPv4 header");
 	  goto done;
 	}
 	sport = dport = nat46_fixup_icmp(nat46, hdr4, old_skb);
 	having_l4 = 1;
 	break;
-	}
       default:
 	break;
     }
