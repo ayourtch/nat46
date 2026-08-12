@@ -1730,6 +1730,22 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
           goto done;
         }
         icmp6h = add_offset(ip6h, v6packet_l3size);
+        /*
+         * ICMPv6 error messages (type 0-127) must contain at least the
+         * original IPv6 header (40 bytes) after the 8-byte ICMPv6 header,
+         * per RFC 4443 §3.1 ~ §3.4.  Without this check, a crafted
+         * error with payload_len=8 (no inner packet) reaches
+         * xlate_payload6_to4, where the memmove size is computed as
+         * v6_len - IPV4HDRSIZE (= 0 - 20 = -20), which wraps to
+         * a huge size_t, causing an unbounded kernel heap overflow.
+         * Informational messages (type 128-255) have no inner packet
+         * and must not be length-restricted here.
+         */
+        if (!(icmp6h->icmp6_type & 128) &&
+            (l3_infrag_payload_len < sizeof(*icmp6h) + sizeof(struct ipv6hdr))) {
+          nat46debug(0, "[nat46] ICMPv6 error too short for inner IPv6 header");
+          goto done;
+        }
         sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_ICMP, icmp6h->icmp6_cksum);
         icmp6h->icmp6_cksum = sum1;
         nat46debug_dump(nat46, 10, icmp6h, l3_infrag_payload_len);
