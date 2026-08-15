@@ -184,6 +184,30 @@ static int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **p
   return err;
 }
 
+static int validate_rule_config(nat46_xlate_rule_t *rule) {
+  int v4_suffix_len;
+  int psid_len;
+
+  if (rule->style != NAT46_XLATE_MAP && rule->style != NAT46_XLATE_MAP0) {
+    return 0;
+  }
+
+  v4_suffix_len = 32 - rule->v4_pref_len;
+  psid_len = rule->ea_len - v4_suffix_len;
+
+  if (rule->v6_pref_len + rule->ea_len > 128 ||
+      psid_len < 0 ||
+      psid_len > 16 ||
+      psid_len + rule->psid_offset > 16) {
+    printk("[nat46] invalid MAP rule: v6-prefix-len %d, v4-prefix-len %d, ea-len %d, psid-offset %d\n",
+           rule->v6_pref_len, rule->v4_pref_len, rule->ea_len,
+           rule->psid_offset);
+    return -1;
+  }
+
+  return 0;
+}
+
 /* 
  * Parse the config commands in the buffer, 
  * destructive (puts zero between the args) 
@@ -217,6 +241,17 @@ int nat46_set_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int co
       nat46debug(13, "Setting remote xlate parameter");
       err = try_parse_rule_arg(&apair->remote, arg_name, &tail);
     }
+  }
+
+  if (0 == err) {
+    err = validate_rule_config(&apair->local);
+  }
+  if (0 == err) {
+    err = validate_rule_config(&apair->remote);
+  }
+  if (err) {
+    memset(&apair->local, 0, sizeof(apair->local));
+    memset(&apair->remote, 0, sizeof(apair->remote));
   }
   return err;
 }
