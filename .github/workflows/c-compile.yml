@@ -13,7 +13,7 @@ jobs:
     - name: build the NAT46 module
       run: |
         cd nat46/modules
-        KCPPFLAGS='-DNAT46_VERSION=\"test\" -Werror' make
+        NAT46_VERSION=ci KCPPFLAGS=-Werror make
     - name: Install kvm
       run: |
         sudo apt-get update
@@ -22,5 +22,4 @@ jobs:
       run: |
         cd test-harness
         ./run-test-harness
-
 
