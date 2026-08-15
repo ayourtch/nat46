@@ -1064,7 +1064,7 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
     *ul_sum = rechecksum16(iph, 10, *ul_sum);
   }
 
-  memmove(((char *)pv6) + IPV4HDRSIZE, get_next_header_ptr6(ip6h, v6_len), v6_len - IPV4HDRSIZE);
+  memmove(((char *)pv6) + IPV4HDRSIZE, get_next_header_ptr6(ip6h, v6_len), v6_len - sizeof(struct ipv6hdr));
   memcpy(pv6, iph, IPV4HDRSIZE);
   *ptailTruncSize += IPV6V4HDRDELTA;
   return (v6_len - IPV6V4HDRDELTA);
