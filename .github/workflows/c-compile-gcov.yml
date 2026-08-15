@@ -1,0 +1,219 @@
+on:
+  workflow_call:
+    inputs:
+      test_filter:
+        required: false
+        type: string
+        default: ''
+      qemu_mem:
+        required: false
+        type: string
+        default: '512M'
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Only run tests whose directory name contains this substring (comma-separated). Leave empty to run the full suite.'
+        required: false
+        default: ''
+      qemu_mem:
+        description: 'QEMU memory size (e.g. 512M).'
+        required: false
+        default: '512M'
+name: GCOV CI
+
+permissions:
+  contents: read
+
+jobs:
+  gcov:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential libncurses-dev flex bison libssl-dev \
+          libelf-dev bc cpio gzip jq kmod qemu-system-x86 wget linux-source \
+          coreutils lcov python3 xz-utils zstd
+    - name: Determine kernel source version
+      id: kernel-src-ver
+      run: |
+        set -- /usr/src/linux-source-*.tar.*
+        if [ "$#" -ne 1 ] || [ ! -e "$1" ]; then
+          echo "Error: expected exactly one Linux source archive below /usr/src" >&2
+          exit 1
+        fi
+        SRC_TARBALL=$1
+        SRC_VER=$(basename "$SRC_TARBALL" | sed 's/linux-source-//' | sed 's/\.tar\..*//')
+        SOURCE_SHA256=$(sha256sum "$SRC_TARBALL" | cut -d' ' -f1)
+        COMPILER_ID=$(gcc --version | head -1 | sha256sum | cut -d' ' -f1)
+        CACHE_IDENTITY=$(
+          {
+            sha256sum "$SRC_TARBALL" | cut -d' ' -f1
+            sha256sum "$GITHUB_WORKSPACE/test-harness/gcov-config.sh" | cut -d' ' -f1
+            gcc --version
+          } | sha256sum | cut -d' ' -f1
+        )
+        {
+          echo "src_tarball=$SRC_TARBALL"
+          echo "version=$SRC_VER"
+          echo "source_sha256=$SOURCE_SHA256"
+          echo "compiler_id=$COMPILER_ID"
+          echo "cache_identity=$CACHE_IDENTITY"
+        } >> "$GITHUB_OUTPUT"
+        echo "Kernel source version: $SRC_VER"
+    - name: Prepare kernel source directory
+      run: |
+        sudo mkdir -p /opt/gcov-kernel
+        sudo chown "$(id -u):$(id -g)" /opt/gcov-kernel
+    - name: Restore cached GCOV kernel
+      id: cache-kernel
+      uses: actions/cache@v4
+      with:
+        path: /opt/gcov-kernel
+        key: gcov-kernel-${{ runner.os }}-${{ runner.arch }}-${{ steps.kernel-src-ver.outputs.source_sha256 }}-${{ steps.kernel-src-ver.outputs.compiler_id }}-${{ hashFiles('test-harness/gcov-config.sh') }}
+    - name: Check cache validity
+      id: cache-valid
+      run: |
+        if [ -s /opt/gcov-kernel/bzImage ] &&
+           [ -s /opt/gcov-kernel/.kernel-version ] &&
+           [ -d /opt/gcov-kernel/src ] &&
+           [ "$(cat /opt/gcov-kernel/.cache-identity 2>/dev/null)" = "${{ steps.kernel-src-ver.outputs.cache_identity }}" ]; then
+          echo "valid=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "valid=false" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Build GCOV kernel
+      if: steps.cache-kernel.outputs.cache-hit != 'true' || steps.cache-valid.outputs.valid != 'true'
+      run: |
+        set -eux
+        cd /opt/gcov-kernel
+        SRC_TARBALL="${{ steps.kernel-src-ver.outputs.src_tarball }}"
+        rm -rf src
+        mkdir src
+        cd src
+        tar xaf "$SRC_TARBALL" --strip-components=1
+        . "$GITHUB_WORKSPACE/test-harness/gcov-config.sh"
+        make -j"$(nproc)" bzImage modules
+        KERNEL_VER=$(make -s kernelrelease)
+        cp arch/x86/boot/bzImage /opt/gcov-kernel/bzImage
+        echo "$KERNEL_VER" > /opt/gcov-kernel/.kernel-version
+        echo "${{ steps.kernel-src-ver.outputs.version }}" > /opt/gcov-kernel/.src-version
+        echo "${{ steps.kernel-src-ver.outputs.cache_identity }}" > /opt/gcov-kernel/.cache-identity
+    - name: Install modules and set kernel version
+      run: |
+        set -eux
+        KERNEL_VER=$(cat /opt/gcov-kernel/.kernel-version)
+        echo "KERNEL_VERSION=${KERNEL_VER}" >> "$GITHUB_ENV"
+        echo "Kernel version: ${KERNEL_VER}"
+        sudo make -C /opt/gcov-kernel/src modules_install
+        sudo mkdir -p /boot
+        sudo cp /opt/gcov-kernel/bzImage "/boot/vmlinuz-${KERNEL_VER}"
+    - name: Build NAT46 module with GCOV flags
+      run: |
+        set -eux
+        cd nat46/modules
+        find . -name '*.gcda' -delete 2>/dev/null || true
+        find . -name '*.gcno' -delete 2>/dev/null || true
+        NAT46_VERSION=ci KCFLAGS='-fprofile-arcs -ftest-coverage' KCPPFLAGS=-Werror make -C "/lib/modules/${KERNEL_VERSION}/build" M="$(pwd)" modules
+        test -n "$(find . -maxdepth 1 -type f -name '*.gcno' -print -quit)"
+        find . -maxdepth 1 -type f -name '*.gcno' -exec ls -la -- {} +
+    - name: Generate coverage-collect.run
+      run: |
+        set -eux
+        MODULE_DIR="$GITHUB_WORKSPACE/nat46/modules"
+        COVERAGE_DIR="$GITHUB_WORKSPACE/test-harness/test-data/coverage"
+        mkdir -p "$COVERAGE_DIR"
+        find "$COVERAGE_DIR" -maxdepth 1 -type f -name '*.gcda' -delete
+        GCOV_SCRIPT="$GITHUB_WORKSPACE/test-harness/coverage-collect.run"
+        {
+          echo "# Auto-generated by GCOV CI - collects GCOV coverage data from debugfs"
+          echo "# This file is executed by myinit inside the VM via startup.run"
+          echo ""
+          echo "# Mount debugfs (myinit built-in mount command)"
+          echo "mkdir -p /sys/kernel/debug"
+          echo "mount -t debugfs none /sys/kernel/debug"
+          echo ""
+          echo "# Create coverage output directory on host"
+          echo "mkdir -p /mnt/host/test-harness/test-data/coverage"
+          echo ""
+          echo "# Debug: show debugfs gcov directory structure"
+          echo "ls /sys/kernel/debug/gcov"
+          echo ""
+          for gcno in "$MODULE_DIR"/*.gcno; do
+            base=$(basename "$gcno" .gcno)
+            gcda_path="/sys/kernel/debug/gcov${MODULE_DIR}/${base}.gcda"
+            echo "# Collect $base.gcda"
+            echo "cp $gcda_path /mnt/host/test-harness/test-data/coverage/${base}.gcda"
+            echo ""
+          done
+          echo "# Coverage collection complete"
+        } > "$GCOV_SCRIPT"
+        echo "Generated $GCOV_SCRIPT"
+        cat "$GCOV_SCRIPT"
+    - name: Run test harness with GCOV kernel
+      env:
+        QEMU_MEM: ${{ inputs.qemu_mem || '512M' }}
+        QEMU_TIMEOUT: 90m
+        GCOV_MODE: 1
+        TEST_FILTER: ${{ inputs.test_filter }}
+      run: |
+        set -eux
+        cd test-harness
+        ./run-test-harness
+    - name: Process coverage data
+      run: |
+        set -eux
+        MODULE_DIR="$GITHUB_WORKSPACE/nat46/modules"
+        COVERAGE_DIR="$GITHUB_WORKSPACE/test-harness/test-data/coverage"
+        EXPECTED_GCDA=$(mktemp)
+        ACTUAL_GCDA=$(mktemp)
+        find "$MODULE_DIR" -maxdepth 1 -type f -name '*.gcno' \
+          -exec basename {} .gcno \; | sort > "$EXPECTED_GCDA"
+        test -s "$EXPECTED_GCDA"
+        find "$COVERAGE_DIR" -maxdepth 1 -type f -name '*.gcda' -size +0c \
+          -exec basename {} .gcda \; | sort > "$ACTUAL_GCDA"
+        if ! diff -u "$EXPECTED_GCDA" "$ACTUAL_GCDA"; then
+          echo "Error: GCOV result set is missing, empty, or unexpected" >&2
+          exit 1
+        fi
+        echo "Collected .gcda files:"
+        ls -la "$COVERAGE_DIR/"
+        for gcda in "$COVERAGE_DIR"/*.gcda; do
+          base=$(basename "$gcda")
+          cp "$gcda" "$MODULE_DIR/$base"
+        done
+        COVERAGE_INFO="$GITHUB_WORKSPACE/test-harness/coverage.info"
+        lcov --capture --directory "$MODULE_DIR" --output-file "$COVERAGE_INFO" \
+          --no-external --rc branch_coverage=1
+        test -s "$COVERAGE_INFO"
+        grep -Eq '^SF:.*/nat46/modules/nat46-(core|glue|module|netdev)\.c$' \
+          "$COVERAGE_INFO"
+    - name: Generate HTML coverage report
+      run: |
+        set -eux
+        GCOV_HTML_DIR="$GITHUB_WORKSPACE/test-harness/coverage-html"
+        rm -rf "$GCOV_HTML_DIR"
+        genhtml "$GITHUB_WORKSPACE/test-harness/coverage.info" \
+          --output-directory "$GCOV_HTML_DIR" --branch-coverage
+        test -s "$GCOV_HTML_DIR/index.html"
+        echo "=== Coverage Summary ==="
+        lcov --summary "$GITHUB_WORKSPACE/test-harness/coverage.info" 2>&1 || true
+    - name: Upload coverage HTML artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-html
+        path: test-harness/coverage-html/
+        if-no-files-found: error
+        retention-days: 30
+    - name: Upload coverage.info artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-info
+        path: test-harness/coverage.info
+        if-no-files-found: error
+        retention-days: 30

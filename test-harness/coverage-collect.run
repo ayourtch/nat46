@@ -1,0 +1,4 @@
+# coverage-collect.run — stub for non-GCOV runs
+# This file is overwritten by run-gcov-ci or the GCOV CI workflow
+# with actual coverage collection commands when GCOV is enabled.
+# In non-GCOV mode (KASAN or regular testing), this stub does nothing.

@@ -47,6 +47,10 @@ echo 1 >/proc/sys/net/ipv6/conf/all/forwarding
 # The host validates test-plan and writes only the selected run commands here.
 run /test-plan.run
 
+# This is a no-op outside GCOV. The GCOV stage replaces it with exact copy
+# commands for the module's current .gcno set before boot.
+run /mnt/host/test-harness/coverage-collect.run
+
 # The host removes this marker before each boot and accepts only this fresh
 # value after QEMU exits.
 echo complete > /mnt/host/test-harness/test-data/captured/run-complete

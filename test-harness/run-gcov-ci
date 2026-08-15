@@ -1,0 +1,265 @@
+#!/bin/bash
+set -euxo pipefail
+
+# run-gcov-ci — Build a GCOV kernel (with caching), run the nat46 test harness,
+# collect coverage data, and generate an HTML coverage report.
+# Works on x86_64 Linux. Can be run locally or by CI.
+#
+# Usage:
+#   ./test-harness/run-gcov-ci
+#
+# Environment variables:
+#   GCOV_KERNEL_CACHE  — directory to cache the built kernel (default: $HOME/.cache/nat46-gcov)
+#   QEMU_MEM            — QEMU memory size (default: 512M)
+#   QEMU_TIMEOUT        — maximum QEMU runtime (default: 90m)
+#   KERNEL_VERSION      — override the kernel version to use (skip build)
+#   JOBS                — make -j jobs (default: $(nproc))
+#   GCOV_HTML_DIR       — output directory for HTML report (default: test-harness/coverage-html)
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+GCOV_KERNEL_CACHE="${GCOV_KERNEL_CACHE:-$HOME/.cache/nat46-gcov}"
+QEMU_MEM="${QEMU_MEM:-512M}"
+QEMU_TIMEOUT="${QEMU_TIMEOUT:-90m}"
+JOBS="${JOBS:-$(nproc)}"
+GCOV_HTML_DIR="${GCOV_HTML_DIR:-$SCRIPT_DIR/coverage-html}"
+
+# ---------------------------------------------------------------------------
+# Step 1: Check dependencies
+# ---------------------------------------------------------------------------
+echo "=== Checking dependencies ==="
+
+MISSING=""
+for cmd in gcc make tar qemu-system-x86_64 wget lcov genhtml sha256sum; do
+  command -v "$cmd" >/dev/null 2>&1 || MISSING="$MISSING $cmd"
+done
+
+if [ -n "$MISSING" ]; then
+  echo "Error: missing commands:$MISSING" >&2
+  echo "On Ubuntu/Debian, install with:" >&2
+  echo "  sudo apt-get install -y build-essential libncurses-dev flex bison libssl-dev" >&2
+  echo "    libelf-dev bc cpio kmod qemu-system-x86 wget linux-source lcov" >&2
+  exit 1
+fi
+
+# Check for linux-source tarball
+set -- /usr/src/linux-source-*.tar.*
+if [ "$#" -ne 1 ] || [ ! -e "$1" ]; then
+  echo "Error: expected exactly one /usr/src/linux-source-*.tar.* archive" >&2
+  echo "Install with: sudo apt-get install -y linux-source" >&2
+  exit 1
+fi
+SRC_TARBALL=$1
+
+SRC_VER=$(basename "$SRC_TARBALL" | sed 's/linux-source-//' | sed 's/\.tar\..*//')
+CACHE_IDENTITY=$(
+  {
+    sha256sum "$SRC_TARBALL" | cut -d' ' -f1
+    sha256sum "$SCRIPT_DIR/gcov-config.sh" | cut -d' ' -f1
+    gcc --version
+  } | sha256sum | cut -d' ' -f1
+)
+echo "Kernel source: $SRC_VER (from $SRC_TARBALL)"
+
+# ---------------------------------------------------------------------------
+# Step 2: Build GCOV kernel (with caching)
+# ---------------------------------------------------------------------------
+KERNEL_VER="${KERNEL_VERSION:-}"
+
+if [ -z "$KERNEL_VER" ]; then
+  CACHE_MARKER="$GCOV_KERNEL_CACHE/.cache-identity"
+  echo "=== Checking for cached GCOV kernel ==="
+
+  if [ -s "$GCOV_KERNEL_CACHE/bzImage" ] &&
+     [ -s "$GCOV_KERNEL_CACHE/.kernel-version" ] &&
+     [ -d "$GCOV_KERNEL_CACHE/src" ] &&
+     [ -f "$CACHE_MARKER" ] &&
+     [ "$(cat "$CACHE_MARKER")" = "$CACHE_IDENTITY" ]; then
+    echo "Cache hit: GCOV kernel already built in $GCOV_KERNEL_CACHE"
+    KERNEL_VER=$(cat "$GCOV_KERNEL_CACHE/.kernel-version")
+  else
+    echo "Cache miss: building GCOV kernel in $GCOV_KERNEL_CACHE"
+    mkdir -p "$GCOV_KERNEL_CACHE"
+    rm -rf "$GCOV_KERNEL_CACHE/src"
+    mkdir -p "$GCOV_KERNEL_CACHE/src"
+    cd "$GCOV_KERNEL_CACHE/src"
+    tar xaf "$SRC_TARBALL" --strip-components=1
+
+    # Configure and build
+    . "$SCRIPT_DIR/gcov-config.sh"
+    make -j"$JOBS" bzImage modules
+
+    # Save artifacts
+    KERNEL_VER=$(make -s kernelrelease)
+    cp arch/x86/boot/bzImage "$GCOV_KERNEL_CACHE/bzImage"
+    echo "$KERNEL_VER" > "$GCOV_KERNEL_CACHE/.kernel-version"
+    echo "$SRC_VER" > "$GCOV_KERNEL_CACHE/.src-version"
+    echo "$CACHE_IDENTITY" > "$CACHE_MARKER"
+
+    cd "$REPO_ROOT"
+  fi
+  echo "GCOV kernel version: $KERNEL_VER"
+fi
+
+if [ -z "$KERNEL_VER" ]; then
+  echo "Error: could not determine KERNEL_VERSION" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3: Install modules and kernel (needs sudo)
+# ---------------------------------------------------------------------------
+echo "=== Installing modules and kernel ==="
+
+if [ ! -d "/lib/modules/$KERNEL_VER" ]; then
+  if [ -d "$GCOV_KERNEL_CACHE/src" ]; then
+    sudo make -C "$GCOV_KERNEL_CACHE/src" modules_install
+  else
+    echo "Error: kernel source not found at $GCOV_KERNEL_CACHE/src" >&2
+    exit 1
+  fi
+fi
+
+# Ensure the build symlink exists
+if [ ! -d "/lib/modules/$KERNEL_VER/build" ]; then
+  if [ -d "$GCOV_KERNEL_CACHE/src" ]; then
+    sudo ln -sf "$GCOV_KERNEL_CACHE/src" "/lib/modules/$KERNEL_VER/build"
+  fi
+fi
+
+# Copy bzImage to /boot if not there
+if [ ! -f "/boot/vmlinuz-$KERNEL_VER" ]; then
+  if [ -f "$GCOV_KERNEL_CACHE/bzImage" ]; then
+    sudo cp "$GCOV_KERNEL_CACHE/bzImage" "/boot/vmlinuz-$KERNEL_VER"
+  else
+    echo "Error: bzImage not found in cache" >&2
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step 4: Build the nat46 module with GCOV flags
+# ---------------------------------------------------------------------------
+echo "=== Building nat46 module with GCOV ==="
+cd "$REPO_ROOT/nat46/modules"
+
+# Clean old gcda/gcno files
+find . -name '*.gcda' -delete 2>/dev/null || true
+find . -name '*.gcno' -delete 2>/dev/null || true
+
+NAT46_VERSION=ci KCFLAGS='-fprofile-arcs -ftest-coverage' KCPPFLAGS=-Werror make -C "/lib/modules/$KERNEL_VER/build" M="$(pwd)" modules
+
+# Verify .gcno files were created
+ls -la *.gcno
+
+# List the module source files for coverage collection
+MODULE_DIR="$(pwd)"
+echo "Module build directory: $MODULE_DIR"
+
+# ---------------------------------------------------------------------------
+# Step 5: Generate coverage-collect.run
+# ---------------------------------------------------------------------------
+echo "=== Generating coverage-collect.run ==="
+
+# The gcda files in debugfs are at: /sys/kernel/debug/gcov<abs-path>/<name>.gcda
+# where <abs-path> is the module build directory path.
+# We construct cat commands for each .gcno file (which corresponds to a .gcda file).
+
+GCOV_SCRIPT="$SCRIPT_DIR/coverage-collect.run"
+COVERAGE_DIR="$SCRIPT_DIR/test-data/coverage"
+mkdir -p "$COVERAGE_DIR"
+find "$COVERAGE_DIR" -maxdepth 1 -type f -name '*.gcda' -delete
+
+GCOV_DIR_IN_DEBUGFS="$MODULE_DIR"
+
+{
+  echo "# Auto-generated by run-gcov-ci — collects GCOV coverage data from debugfs"
+  echo "# This file is executed by myinit inside the VM via startup.run"
+  echo ""
+  echo "# Mount debugfs (myinit built-in mount command)"
+  echo "mkdir -p /sys/kernel/debug"
+  echo "mount -t debugfs none /sys/kernel/debug"
+  echo ""
+  echo "# Create coverage output directory on host"
+  echo "mkdir -p /mnt/host/test-harness/test-data/coverage"
+  echo ""
+  echo "# Debug: show debugfs gcov directory structure"
+  echo "ls /sys/kernel/debug/gcov"
+  echo ""
+
+  # Generate cp commands for each .gcno file
+  # Use "cp" (myinit v0.0.11+) because "cat <file>" uses read_to_string which
+  # fails on binary .gcda files, and redirection ordering is fragile in myinit.
+  for gcno in "$MODULE_DIR"/*.gcno; do
+    base=$(basename "$gcno" .gcno)
+    gcda_path="/sys/kernel/debug/gcov${GCOV_DIR_IN_DEBUGFS}/${base}.gcda"
+    echo "# Collect $base.gcda"
+    echo "cp $gcda_path /mnt/host/test-harness/test-data/coverage/${base}.gcda"
+    echo ""
+  done
+
+  echo "# Coverage collection complete"
+} > "$GCOV_SCRIPT"
+
+echo "Generated $GCOV_SCRIPT"
+cat "$GCOV_SCRIPT"
+
+# ---------------------------------------------------------------------------
+# Step 6: Run the test harness
+# ---------------------------------------------------------------------------
+echo "=== Running test harness with GCOV ==="
+cd "$SCRIPT_DIR"
+GCOV_MODE=1 KERNEL_VERSION="$KERNEL_VER" QEMU_MEM="$QEMU_MEM" \
+  QEMU_TIMEOUT="$QEMU_TIMEOUT" ./run-test-harness
+
+# ---------------------------------------------------------------------------
+# Step 7: Collect and process coverage data
+# ---------------------------------------------------------------------------
+echo "=== Processing coverage data ==="
+
+EXPECTED_GCDA=$(mktemp)
+ACTUAL_GCDA=$(mktemp)
+find "$MODULE_DIR" -maxdepth 1 -type f -name '*.gcno' \
+  -exec basename {} .gcno \; | sort > "$EXPECTED_GCDA"
+test -s "$EXPECTED_GCDA"
+find "$COVERAGE_DIR" -maxdepth 1 -type f -name '*.gcda' -size +0c \
+  -exec basename {} .gcda \; | sort > "$ACTUAL_GCDA"
+if ! diff -u "$EXPECTED_GCDA" "$ACTUAL_GCDA"; then
+  echo "Error: GCOV result set is missing, empty, or unexpected" >&2
+  exit 1
+fi
+
+echo "Collected .gcda files:"
+ls -la "$COVERAGE_DIR/"
+
+# Copy .gcda files alongside .gcno files in the module build directory
+echo "=== Copying .gcda files to module build directory ==="
+for gcda in "$COVERAGE_DIR"/*.gcda; do
+  base=$(basename "$gcda")
+  cp "$gcda" "$MODULE_DIR/$base"
+  echo "  Copied $base"
+done
+
+# Run lcov to capture coverage
+echo "=== Capturing coverage with lcov ==="
+COVERAGE_INFO="$SCRIPT_DIR/coverage.info"
+lcov --capture --directory "$MODULE_DIR" --output-file "$COVERAGE_INFO" \
+  --no-external --rc branch_coverage=1
+test -s "$COVERAGE_INFO"
+grep -Eq '^SF:.*/nat46/modules/nat46-(core|glue|module|netdev)\.c$' \
+  "$COVERAGE_INFO"
+
+# Generate HTML report
+echo "=== Generating HTML coverage report ==="
+rm -rf "$GCOV_HTML_DIR"
+genhtml "$COVERAGE_INFO" --output-directory "$GCOV_HTML_DIR" \
+  --branch-coverage
+
+echo ""
+echo "=== Coverage Summary ==="
+lcov --summary "$COVERAGE_INFO" 2>&1 || true
+echo ""
+echo "HTML coverage report: $GCOV_HTML_DIR/index.html"
+echo "Raw coverage data: $COVERAGE_INFO"
+echo "gcda files: $COVERAGE_DIR/"
