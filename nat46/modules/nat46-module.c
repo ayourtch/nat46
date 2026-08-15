@@ -51,12 +51,13 @@
 #define NAT46_CONTROL_PROC_NAME "control"
 
 #ifndef NAT46_VERSION
-#define NAT46_VERSION __DATE__ " " __TIME__
+#define NAT46_VERSION "unknown"
 #endif
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrew Yourtchenko <ayourtch@gmail.com>");
 MODULE_DESCRIPTION("NAT46 stateless translation");
+MODULE_VERSION(NAT46_VERSION);
 
 int debug = 0;
 int zero_csum_pass = 0;
@@ -269,5 +270,4 @@ static void __exit nat46_exit(void)
 
 module_init(nat46_init);
 module_exit(nat46_exit);
-
 

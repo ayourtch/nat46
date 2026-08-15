@@ -9,7 +9,8 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=nat46
-PKG_VERSION:=0000000
+PKG_VERSION:=0.1.0
+PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -32,6 +33,7 @@ MAKE_KMOD := $(MAKE) -C "$(LINUX_DIR)" \
 		CROSS_COMPILE="$(TARGET_CROSS)" \
 		ARCH="$(LINUX_KARCH)" \
 		PATH="$(TARGET_PATH)" \
+		NAT46_VERSION="$(PKG_VERSION)-r$(PKG_RELEASE)" \
 		SUBDIRS="$(PKG_BUILD_DIR)/kmod" \
 
 define Build/Compile
@@ -48,6 +50,5 @@ define KernelPackage/nat46/install
 endef
 
 $(eval $(call KernelPackage,nat46))
-
 
 
