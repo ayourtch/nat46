@@ -19,6 +19,8 @@ MINIMUM_PAYLOAD_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-minimum-payload/inject-tap0.jsonl")
 ATOMIC_FRAGMENT_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-atomic-fragment/inject-tap0.jsonl")
+MAP_ADDRESS_WIDTH_FIXTURE = Path(
+    "test-harness/tests/map-address-width/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -51,6 +53,55 @@ def udp_checksum(src, dst, sport, dport, payload):
                     + struct.pack("!I3xB", length, 17))
     udp = struct.pack("!HHHH", sport, dport, length, 0) + payload
     return checksum(pseudoheader + udp)
+
+
+def ipv4_tcp_packet(src, dst, sport, dport, payload):
+    tcp = bytearray(struct.pack(
+        "!HHIIBBHHH", sport, dport, 0, 0, 0x50, 2, 8192, 0, 0))
+    pseudoheader = (ipaddress.IPv4Address(src).packed
+                    + ipaddress.IPv4Address(dst).packed
+                    + struct.pack("!BBH", 0, 6, len(tcp) + len(payload)))
+    struct.pack_into("!H", tcp, 16, checksum(pseudoheader + tcp + payload))
+
+    total_length = 20 + len(tcp) + len(payload)
+    ipv4 = bytearray(struct.pack(
+        "!BBHHHBBH", 0x45, 0, total_length, 1, 0, 255, 6, 0))
+    ipv4.extend(ipaddress.IPv4Address(src).packed)
+    ipv4.extend(ipaddress.IPv4Address(dst).packed)
+    struct.pack_into("!H", ipv4, 10, checksum(ipv4))
+
+    return {
+        "timestamp_us": 1000000,
+        "layers": [
+            {
+                "layertype": "ether",
+                "dst": "0E:86:3C:CD:51:CA",
+                "src": "52:55:0A:00:02:02",
+                "etype": 2048,
+            },
+            {
+                "layertype": "Ip",
+                "version": 4,
+                "ihl": 5,
+                "tos": 0,
+                "len": total_length,
+                "id": 1,
+                "flags": {
+                    "reserved": False,
+                    "dont_fragment": False,
+                    "more_fragments": False,
+                    "fragment_offset": 0,
+                },
+                "ttl": 255,
+                "proto": 6,
+                "chksum": struct.unpack_from("!H", ipv4, 10)[0],
+                "src": src,
+                "dst": dst,
+                "options": [],
+            },
+            {"layertype": "raw", "data": list(tcp + payload)},
+        ],
+    }
 
 
 def icmpv6_error_packet(quoted_packet, timestamp_us=1000000,
@@ -90,6 +141,11 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 
 
 def main():
+    map_packet = ipv4_tcp_packet(
+        "192.168.1.100", "8.8.8.8", 12345, 81, bytes([42]) * 20)
+    MAP_ADDRESS_WIDTH_FIXTURE.write_text(
+        json.dumps(map_packet, separators=(",", ":")) + "\n")
+
     advertised_payload_len = 1000
     original_payload = bytes([42]) * (advertised_payload_len - 8)
     quoted_checksum = udp_checksum(LOCAL_V6, REMOTE_V6, 53, 54,

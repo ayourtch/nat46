@@ -1,0 +1,2 @@
+# packet assertion
+{"expected_rx_count":1,"checks":[{"count":1,"packet":{"direction":"rx","valid_checksums":true,"layers":[{"layertype":"Ipv6","src":"2001:db8:1:1:2:3:4:3039","dst":"2001:4860:4860::8888","next_header":6,"payload_length":40},{"layertype":"Tcp","sport":12345,"dport":81,"flags":2,"nonzero_fields":["chksum"]}]}}]}

@@ -6,6 +6,22 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 rm -f /tmp/expected.jsonl
 rm -f /tmp/captured.jsonl
 rm -f /tmp/packet-assertion-result.json
+rm -f /tmp/expected-config.txt
+rm -f /tmp/captured-config.txt
+
+EXPECTED_CONFIG=test-data/expected/${TESTNAME}-config.txt
+CAPTURED_CONFIG=test-data/captured/${TESTNAME}-config.txt
+check_config_snapshot() {
+  if [ -f "$EXPECTED_CONFIG" ]; then
+    if [ ! -s "$CAPTURED_CONFIG" ]; then
+      echo "FAIL: configuration snapshot is missing or empty for ${TESTNAME}" >&2
+      exit 1
+    fi
+    sed '/^$/d' "$EXPECTED_CONFIG" > /tmp/expected-config.txt
+    sed '/^$/d' "$CAPTURED_CONFIG" > /tmp/captured-config.txt
+    diff -u /tmp/expected-config.txt /tmp/captured-config.txt
+  fi
+}
 
 # Predicate-based checks let security regressions assert only the relevant
 # packet properties (for example, "no translated rx packet") without baking
@@ -104,6 +120,7 @@ if [ "$ASSERTION_KIND" = "# packet assertion" ]; then
     echo "FAIL: packet checksum assertion failed for ${TESTNAME}" >&2
     exit 1
   fi
+  check_config_snapshot
   echo "PASS (packet assertion): ${TESTNAME}"
   exit 0
 fi
@@ -149,6 +166,7 @@ case "$ASSERTION_KIND" in
       }' test-data/captured/${TESTNAME}.jsonl >&2 || true
     exit 1
     fi
+    check_config_snapshot
     echo "PASS (jq assertion): ${TESTNAME}"
     exit 0
     ;;
@@ -171,3 +189,4 @@ else
 fi
 
 diff -c /tmp/expected.jsonl /tmp/captured.jsonl
+check_config_snapshot

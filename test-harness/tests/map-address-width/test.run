@@ -1,0 +1,27 @@
+# MAP field widths are interdependent even when every individual value is in
+# range. Exercise each one-bit-invalid boundary, then translate through the
+# valid 128-bit boundary case.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+echo config nat46dev debug 255 > /proc/net/nat46/control
+
+# IPv6 prefix plus EA bits is 129 bits.
+echo insert nat46dev local.v4 192.168.1.101/32 local.v6 2001:db8:1::/113 local.style MAP local.ea-len 16 local.psid-offset 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 > /proc/net/nat46/control
+# Eight EA bits cannot contain a nine-bit IPv4 suffix.
+echo insert nat46dev local.v4 192.168.0.0/23 local.v6 2001:db8:2::/96 local.style MAP local.ea-len 8 local.psid-offset 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 > /proc/net/nat46/control
+# A 17-bit PSID does not fit in the transport identifier.
+echo insert nat46dev local.v4 192.168.1.102/32 local.v6 2001:db8:3::/96 local.style MAP local.ea-len 17 local.psid-offset 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 > /proc/net/nat46/control
+# A 16-bit PSID at offset one crosses the transport identifier boundary.
+echo insert nat46dev local.v4 192.168.1.103/32 local.v6 2001:db8:4::/112 local.style MAP local.ea-len 16 local.psid-offset 1 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 > /proc/net/nat46/control
+
+# This rule exactly fills the address and transport-identifier widths.
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1:2:3:4:0/112 local.style MAP local.ea-len 16 local.psid-offset 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/map-address-width.jsonl
+inject /mnt/host/test-harness/tests/map-address-width/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/map-address-width-inject.log
+capture stop all
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/map-address-width-config.txt
+
+echo del nat46dev > /proc/net/nat46/control

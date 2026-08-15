@@ -5,3 +5,4 @@ ipv6-quote-atomic-fragment
 ipv6-quote-short-fragment
 ipv6-quote-short-transport
 ipv6-quote-minimum-payload
+map-address-width

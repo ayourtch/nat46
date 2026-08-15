@@ -105,6 +105,9 @@ for test_name in "${SELECTED_TESTS[@]}"; do
   fi
   rm -f -- "test-data/captured/${test_name}.jsonl"
   rm -f -- "test-data/captured/${test_name}-inject.log"
+  if [ -f "test-data/expected/${test_name}-config.txt" ]; then
+    rm -f -- "test-data/captured/${test_name}-config.txt"
+  fi
 done
 rm -f -- test-data/captured/run-complete
 
