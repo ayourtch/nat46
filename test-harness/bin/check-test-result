@@ -1,13 +1,173 @@
 #!/bin/sh
 set -eux
 TESTNAME=$1
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 rm -f /tmp/expected.jsonl
 rm -f /tmp/captured.jsonl
+rm -f /tmp/packet-assertion-result.json
 
+# Predicate-based checks let security regressions assert only the relevant
+# packet properties (for example, "no translated rx packet") without baking
+# timestamps or unrelated neighbor traffic into an exact capture fixture.
+ASSERTION_KIND=$(head -n 1 test-data/expected/${TESTNAME}.jsonl)
+INJECTION_INPUT=tests/${TESTNAME}/inject-tap0.jsonl
+if [ -f "$INJECTION_INPUT" ]; then
+  INJECTION_LOG=test-data/captured/${TESTNAME}-inject.log
+  # myinit ignores blank JSONL lines, so count records rather than physical
+  # lines. This keeps the host's completeness check aligned with the loader.
+  EXPECTED_INJECTIONS=$(awk 'NF { count++ } END { print count + 0 }' \
+    "$INJECTION_INPUT")
+  if [ ! -f "$INJECTION_LOG" ] ||
+     ! grep -Fqx "Injection complete: ${EXPECTED_INJECTIONS} packets sent" "$INJECTION_LOG"; then
+    echo "FAIL: expected ${EXPECTED_INJECTIONS} injected packet(s) for ${TESTNAME}" >&2
+    cat "$INJECTION_LOG" >&2 2>/dev/null || true
+    exit 1
+  fi
+fi
 
-jq 'del(.timestamp_us)' test-data/expected/${TESTNAME}.jsonl >/tmp/expected.jsonl
-jq 'del(.timestamp_us)' test-data/captured/${TESTNAME}.jsonl >/tmp/captured.jsonl
+if [ "$ASSERTION_KIND" = "# packet assertion" ]; then
+  tail -n +2 test-data/expected/${TESTNAME}.jsonl > /tmp/packet-assertion.json
+  if ! jq -s --slurpfile spec /tmp/packet-assertion.json '
+    def layer_matches($expected; $actual):
+      (reduce ($expected | keys[] |
+               select(. != "data_prefix" and . != "nonzero_fields")) as $key
+        (true; . and ($actual[$key] == $expected[$key]))) and
+      (($expected | has("data_prefix") | not) or
+       ($actual.data[0:($expected.data_prefix | length)] ==
+        $expected.data_prefix)) and
+      (reduce ($expected.nonzero_fields[]?) as $field
+        (true; . and (($actual[$field] // 0) != 0)));
+    def packet_matches($expected):
+      . as $actual |
+      (($expected | has("direction") | not) or
+       $actual.direction == $expected.direction) and
+      (reduce ($expected.layers[]?) as $required
+        (true; . and any($actual.layers[]?;
+                         layer_matches($required; .))));
+    def layer_summary:
+      if .layertype == "Ip" then
+        {layertype, src, dst, proto, len, id, flags}
+      elif .layertype == "Ipv6" then
+        {layertype, src, dst, next_header, payload_length}
+      elif .layertype == "Tcp" then
+        {layertype, sport, dport, flags, chksum}
+      elif .layertype == "Udp" then
+        {layertype, sport, dport, len, chksum}
+      elif .layertype == "Icmp" then
+        {layertype, typ, code, chksum}
+      elif .layertype == "Icmpv6" then
+        {layertype, type_, code, checksum}
+      elif .layertype == "raw" then
+        {layertype,
+         data_length: (.data | length),
+         data_prefix: .data[:16]}
+      else
+        {layertype}
+      end;
+    def packet_summary:
+      {direction, layers: [.layers[]? | layer_summary]};
+    . as $packets |
+    ([$packets[] | select(.direction == "rx")]) as $received |
+    ([$spec[0].checks[] |
+      . as $check |
+      {
+        expected_count: $check.count,
+        actual_count: ([$packets[] |
+                        select(packet_matches($check.packet))] | length),
+        packet: $check.packet
+      }]) as $checks |
+    {
+      ok: (($spec[0] | has("expected_rx_count")) and
+           (($received | length) == $spec[0].expected_rx_count) and
+           all($checks[]; .actual_count == .expected_count)),
+      expected_rx_count: $spec[0].expected_rx_count,
+      actual_rx_count: ($received | length),
+      checks: $checks,
+      captured_directions: ($packets |
+        group_by(.direction) |
+        map({direction: .[0].direction, count: length})),
+      captured_packets: [$packets[] | packet_summary]
+    }
+  ' test-data/captured/${TESTNAME}.jsonl \
+      > /tmp/packet-assertion-result.json; then
+    echo "FAIL: could not evaluate structured packet assertion for ${TESTNAME}" >&2
+    exit 1
+  fi
+  if ! jq -e '.ok' /tmp/packet-assertion-result.json >/dev/null; then
+    echo "FAIL: structured packet assertion failed for ${TESTNAME}" >&2
+    jq 'del(.ok)' /tmp/packet-assertion-result.json >&2
+    exit 1
+  fi
+  if ! "$SCRIPT_DIR/validate-packet-checksums" \
+       test-data/captured/${TESTNAME}.jsonl /tmp/packet-assertion.json; then
+    echo "FAIL: packet checksum assertion failed for ${TESTNAME}" >&2
+    exit 1
+  fi
+  echo "PASS (packet assertion): ${TESTNAME}"
+  exit 0
+fi
+
+case "$ASSERTION_KIND" in
+  "# packet assertion "*)
+    echo "FAIL: legacy protocol-only assertion is not supported for ${TESTNAME}" >&2
+    exit 1
+    ;;
+esac
+
+case "$ASSERTION_KIND" in
+  "# jq assertion rx-count="*)
+    EXPECTED_RX_COUNT=${ASSERTION_KIND##*=}
+    case "$EXPECTED_RX_COUNT" in
+      ''|*[!0-9]*)
+        echo "FAIL: invalid jq rx-count for ${TESTNAME}" >&2
+        exit 1
+        ;;
+    esac
+    tail -n +2 test-data/expected/${TESTNAME}.jsonl > /tmp/assertion.jq
+    ACTUAL_RX_COUNT=$(jq -s '[.[] | select(.direction == "rx")] | length' \
+      test-data/captured/${TESTNAME}.jsonl)
+    if [ "$ACTUAL_RX_COUNT" != "$EXPECTED_RX_COUNT" ] ||
+       ! jq -s -e -f /tmp/assertion.jq test-data/captured/${TESTNAME}.jsonl; then
+    echo "FAIL: packet assertion failed for ${TESTNAME}" >&2
+    jq -s '
+      {
+        packets: length,
+        directions: (group_by(.direction) |
+          map({direction: .[0].direction, count: length})),
+        packet_summaries: map({
+          direction,
+          layers: [.layers[]? |
+            if .layertype == "Ip" then
+              {layertype, src, dst, proto}
+            elif .layertype == "Ipv6" then
+              {layertype, src, dst, next_header, payload_length}
+            else
+              {layertype}
+            end]
+        })
+      }' test-data/captured/${TESTNAME}.jsonl >&2 || true
+    exit 1
+    fi
+    echo "PASS (jq assertion): ${TESTNAME}"
+    exit 0
+    ;;
+  "# jq assertion"*)
+    echo "FAIL: jq assertion lacks rx-count for ${TESTNAME}" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$(cat test-data/expected/${TESTNAME}.jsonl)" = "pass" ]; then
+  echo "FAIL: survival-only expectation is not supported for ${TESTNAME}" >&2
+  exit 1
+fi
+
+if jq 'del(.timestamp_us)' < test-data/expected/${TESTNAME}.jsonl > /tmp/expected.jsonl 2>/dev/null; then
+  jq 'del(.timestamp_us)' < test-data/captured/${TESTNAME}.jsonl > /tmp/captured.jsonl
+else
+  cp test-data/expected/${TESTNAME}.jsonl /tmp/expected.jsonl
+  cp test-data/captured/${TESTNAME}.jsonl /tmp/captured.jsonl
+fi
 
 diff -c /tmp/expected.jsonl /tmp/captured.jsonl
-

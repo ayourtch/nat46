@@ -1,36 +1,56 @@
-This is a (long overdue) test harness for the nat46.ko module.
+# NAT46 test harness
 
-The goal is to trivially run it in two modes:
+The harness boots a Linux kernel under QEMU, loads the freshly built
+`nat46.ko`, injects JSONL packet fixtures, captures traffic on the NAT46
+device, and checks the capture after the guest exits. The guest uses the pinned,
+checksum-verified `myinit` v0.0.16 binary. Its network backend is restricted,
+the checkout is mounted read-only, and only the capture and coverage directories
+are writable.
 
-- as a CI in github
-- as a local test bench
+## Requirements and local use
 
-The high-level setup is more or less how this module was originally written some years ago:
-a kernel running under KVM, mounting the host filesystem via p9, and loading
-the module from there.
+The full harness targets x86-64 Linux. It requires a bootable kernel image and
+matching module tree, a built `nat46/modules/nat46.ko`, and these host tools:
+QEMU, GNU `timeout`, `wget`, `sha256sum`, `cpio`, `gzip`, `python3`,
+`jq`, `kmod`, `xz`, and `zstd`. Access to `/dev/kvm` is optional.
 
-However, as an experiment, I decided to do it in a much more lightweight fashion -
-rather than going the classic route of building the disk image of the root device and
-mounting that, with the help of LLM I built a custom /init, which gives enough of
-a shell-like experience to do the system bring-up and tests within it.
+From the repository root:
 
-In part it is done to test-drive another project of mine: https://github.com/ayourtch/oside,
-whose purpose in life is to allow to relatively easily do packet manipulations from Rust.
+```sh
+make -C nat46/modules
+TEST_FILTER=basic ./test-harness/run-test-harness
+```
 
-Admittedly, it is a fair bit less feature-complete than Scapy at this point, but not having
-to deal with installation and management of Python inside the disk image is arguably worth the hassle.
+The relevant environment variables are:
 
-The init shell has a command "oside", which gives a rudimentary TUI to edit the jsonl files with
-the packets. Also one can use "pcap2json" command inside the shell to convert the files inside the shell.
+- `KERNEL_VERSION`: exact kernel release to boot; defaults to `uname -r`.
+- `KERNEL_FILE` and `KERNEL_MODULE_PATH`: explicit matching image and module
+  tree; otherwise the harness resolves both from `KERNEL_VERSION`.
+- `NAT46_MODULE_PATH`: exact module to place in the initramfs; defaults to the
+  module in this checkout.
+- `TEST_FILTER`: comma-separated substrings used to select planned tests.
+  A filter that selects no tests is an error.
+- `QEMU_MEM`: guest memory size; defaults to `512M`.
+- `QEMU_TIMEOUT`: maximum QEMU runtime; defaults to `30m`.
+- `MYINIT_PATH` and `MYINIT_SHA256`: alternate guest binary and its required
+  checksum.
 
-The tests are sitting under tests/ directory, and need to be executed one-by-one from startup.run - this
-script is executed immediately at bootup. In the future the tests *may* be moved into autoexec.run, which
-is also run at startup, but with a delay that allows the user to break into interactive shell.
+## Test plan and results
 
-Each test should configure nat46 device(s) as it sees fit, inject some packets, and capture the expected
-packets into test-data/captured/*testname*.jsonl. After the VM run concludes, each captured file is compared
-with its sibling file in test-data/expected/*testname*.jsonl, and is expected to be identical, modulo timestamps.
+`test-plan` is the authoritative ordered list of test names. Every listed name
+must have `tests/<name>/test.run`, and every directory containing a
+`test.run` must appear in the plan. The host validates that relationship,
+applies `TEST_FILTER`, and generates the guest run script before packing the
+initramfs. The initial plan contains only `basic`.
 
-Admittedly this is not *too* much of a framework, but hopefully should allow for some relatively useful tests
-to be done relatively easily.
+Before every boot, the host removes only the selected tests' old captures and
+injection logs plus the run-completion marker. A run succeeds only when the
+guest writes a fresh completion marker, every selected capture is nonempty,
+and every injection log reports the exact number of nonblank JSONL records.
 
+Expected files live in `test-data/expected/<name>.jsonl`. Exact JSONL results
+are compared after removing top-level timestamps. Structured packet assertions
+start with `# packet assertion` and describe the required direction, receive
+count, layers, fields, and optional serialized checksum validation. Custom jq
+assertions must declare an exact receive count in a
+`# jq assertion rx-count=N` header.

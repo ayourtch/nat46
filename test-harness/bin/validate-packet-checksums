@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Validate checksums requested by structured packet assertions."""
+
+import ipaddress
+import json
+from pathlib import Path
+import struct
+import sys
+
+
+def checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\0"
+    total = sum(struct.unpack(f"!{len(data) // 2}H", data))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+def layer_matches(expected: dict, actual: dict) -> bool:
+    for key, value in expected.items():
+        if key in {"data_prefix", "nonzero_fields"}:
+            continue
+        if actual.get(key) != value:
+            return False
+    prefix = expected.get("data_prefix")
+    if prefix is not None and actual.get("data", [])[:len(prefix)] != prefix:
+        return False
+    return all(actual.get(field, 0) != 0
+               for field in expected.get("nonzero_fields", []))
+
+
+def packet_matches(expected: dict, actual: dict) -> bool:
+    if "direction" in expected and actual.get("direction") != expected["direction"]:
+        return False
+    return all(any(layer_matches(required, layer)
+                   for layer in actual.get("layers", []))
+               for required in expected.get("layers", []))
+
+
+def packet_summary(packet: dict) -> str:
+    details = [packet.get("direction", "unknown-direction")]
+    for layer in packet.get("layers", []):
+        kind = layer.get("layertype")
+        if kind == "Ip":
+            details.append(
+                f"Ip {layer.get('src')}->{layer.get('dst')} "
+                f"proto={layer.get('proto')} len={layer.get('len')}"
+            )
+        elif kind == "Ipv6":
+            details.append(
+                f"Ipv6 {layer.get('src')}->{layer.get('dst')} "
+                f"next_header={layer.get('next_header')} "
+                f"payload_length={layer.get('payload_length')}"
+            )
+        elif kind == "Icmp":
+            details.append(
+                f"Icmp type={layer.get('typ')} code={layer.get('code')}"
+            )
+        elif kind == "Icmpv6":
+            details.append(
+                f"Icmpv6 type={layer.get('type_')} code={layer.get('code')}"
+            )
+        elif kind in {"Tcp", "Udp"}:
+            details.append(
+                f"{kind} {layer.get('sport')}->{layer.get('dport')}"
+            )
+    return "; ".join(details)
+
+
+def invalid_checksum_message(
+    transport: str,
+    checked: bytes,
+    checksum_offset: int,
+    checked_length: int,
+) -> str:
+    actual = int.from_bytes(
+        checked[checksum_offset:checksum_offset + 2], "big"
+    )
+    without_checksum = bytearray(checked)
+    without_checksum[checksum_offset:checksum_offset + 2] = b"\0\0"
+    expected = checksum(bytes(without_checksum))
+    residual = checksum(checked)
+    return (
+        f"invalid {transport} checksum: field=0x{actual:04x}, "
+        f"expected=0x{expected:04x}, residual=0x{residual:04x}, "
+        f"checked_length={checked_length}"
+    )
+
+
+def serialize_layer(layer: dict) -> bytes:
+    kind = layer["layertype"]
+    if kind == "Ip":
+        if layer.get("options"):
+            raise ValueError("IPv4 options are not supported by checksum validator")
+        flags = layer["flags"]
+        fragment = ((int(flags["reserved"]) << 15)
+                    | (int(flags["dont_fragment"]) << 14)
+                    | (int(flags["more_fragments"]) << 13)
+                    | flags["fragment_offset"])
+        return (struct.pack("!BBHHHBBH", (layer["version"] << 4) | layer["ihl"],
+                            layer["tos"], layer["len"], layer["id"], fragment,
+                            layer["ttl"], layer["proto"], layer["chksum"])
+                + ipaddress.IPv4Address(layer["src"]).packed
+                + ipaddress.IPv4Address(layer["dst"]).packed)
+    if kind == "Ipv6":
+        return (struct.pack("!IHBB", layer["version_class"],
+                            layer["payload_length"], layer["next_header"],
+                            layer["hop_limit"])
+                + ipaddress.IPv6Address(layer["src"]).packed
+                + ipaddress.IPv6Address(layer["dst"]).packed)
+    if kind == "Tcp":
+        return struct.pack(
+            "!HHIIBBHHH", layer["sport"], layer["dport"], layer["seq"],
+            layer["ack"], (layer["dataofs"] << 4) | layer["reserved"],
+            layer["flags"], layer["window"], layer["chksum"], layer["urgptr"])
+    if kind == "Udp":
+        return struct.pack("!HHHH", layer["sport"], layer["dport"],
+                           layer["len"], layer["chksum"])
+    if kind == "Icmp":
+        return struct.pack("!BBH", layer["typ"], layer["code"], layer["chksum"])
+    if kind == "Icmpv6":
+        return struct.pack("!BBH", layer["type_"], layer["code"], layer["checksum"])
+    if kind in {"echo", "echoReply", "icmpv6EchoRequest", "icmpv6EchoReply"}:
+        return struct.pack("!HH", layer["identifier"], layer["sequence"])
+    if kind in {"icmpv6DestUnreach", "icmpv6TimeExceeded"}:
+        return (struct.pack("!I", layer.get("unused", 0))
+                + bytes(layer.get("invoking_packet", [])))
+    if kind == "icmpv6PacketTooBig":
+        return (struct.pack("!I", layer["mtu"])
+                + bytes(layer.get("invoking_packet", [])))
+    if kind == "icmpv6ParameterProblem":
+        return (struct.pack("!I", layer["pointer"])
+                + bytes(layer.get("invoking_packet", [])))
+    if kind == "raw":
+        return bytes(layer["data"])
+    if kind == "ether":
+        return b""
+    raise ValueError(f"unsupported layer {kind!r}")
+
+
+def validate(packet: dict) -> None:
+    layers = packet["layers"]
+    network_index = next(i for i, layer in enumerate(layers)
+                         if layer["layertype"] in {"Ip", "Ipv6"})
+    network = layers[network_index]
+    chunks = [serialize_layer(layer) for layer in layers[network_index:]]
+    packet_bytes = b"".join(chunks)
+    total_length = (network["len"] if network["layertype"] == "Ip"
+                    else 40 + network["payload_length"])
+    if len(packet_bytes) != total_length:
+        raise ValueError(f"serialized length {len(packet_bytes)} != {total_length}")
+
+    if network["layertype"] == "Ip" and checksum(chunks[0]) != 0:
+        raise ValueError(invalid_checksum_message(
+            "IPv4 header", chunks[0], 10, len(chunks[0])
+        ))
+
+    transport_index = next(
+        (i for i in range(network_index + 1, len(layers))
+         if layers[i]["layertype"] in {"Tcp", "Udp", "Icmp", "Icmpv6"}),
+        None,
+    )
+    if transport_index is None:
+        return
+    offset = sum(len(serialize_layer(layer))
+                 for layer in layers[network_index:transport_index])
+    segment = packet_bytes[offset:]
+    transport = layers[transport_index]["layertype"]
+    checksum_length = len(segment)
+    if transport == "Udp":
+        checksum_length = layers[transport_index]["len"]
+        if checksum_length < 8 or checksum_length > len(segment):
+            raise ValueError(f"invalid UDP length {checksum_length}")
+        segment = segment[:checksum_length]
+    if transport == "Icmp":
+        checked = segment
+    elif network["layertype"] == "Ipv6":
+        pseudoheader = (ipaddress.IPv6Address(network["src"]).packed
+                        + ipaddress.IPv6Address(network["dst"]).packed
+                        + struct.pack("!I3xB", checksum_length,
+                                      network["next_header"]))
+        checked = pseudoheader + segment
+    else:
+        pseudoheader = (ipaddress.IPv4Address(network["src"]).packed
+                        + ipaddress.IPv4Address(network["dst"]).packed
+                        + struct.pack("!BBH", 0, network["proto"],
+                                      checksum_length))
+        checked = pseudoheader + segment
+    if checksum(checked) != 0:
+        field_offsets = {"Tcp": 16, "Udp": 6, "Icmp": 2, "Icmpv6": 2}
+        checksum_offset = len(checked) - len(segment) + field_offsets[transport]
+        raise ValueError(invalid_checksum_message(
+            transport, checked, checksum_offset, checksum_length
+        ))
+
+
+def main() -> int:
+    if len(sys.argv) != 3:
+        print(f"usage: {sys.argv[0]} CAPTURE.jsonl SPEC.json", file=sys.stderr)
+        return 2
+    packets = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+    spec = json.loads(Path(sys.argv[2]).read_text())
+    try:
+        for check_index, check in enumerate(spec["checks"], 1):
+            expected = check["packet"]
+            if not expected.get("valid_checksums"):
+                continue
+            for packet_index, packet in enumerate(packets, 1):
+                if packet_matches(expected, packet):
+                    try:
+                        validate(packet)
+                    except (KeyError, StopIteration, ValueError) as error:
+                        raise ValueError(
+                            f"check {check_index}, captured packet "
+                            f"{packet_index} ({packet_summary(packet)}): {error}"
+                        ) from error
+    except (KeyError, StopIteration, ValueError) as error:
+        print(f"checksum validation failed: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
