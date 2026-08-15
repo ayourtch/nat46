@@ -1750,6 +1750,16 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
           nat46debug(0, "[nat46] ICMPv6 error too short for inner IPv6 header");
           goto done;
         }
+        if (!(icmp6h->icmp6_type & 128)) {
+          struct ipv6hdr *quoted_ip6h = (struct ipv6hdr *)(icmp6h + 1);
+          int quoted_len = l3_infrag_payload_len - sizeof(*icmp6h);
+
+          if (quoted_ip6h->nexthdr == NEXTHDR_FRAGMENT &&
+              quoted_len < sizeof(*quoted_ip6h) + sizeof(struct frag_hdr)) {
+            nat46debug(0, "[nat46] ICMPv6 quote too short for Fragment header");
+            goto done;
+          }
+        }
         sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_ICMP, icmp6h->icmp6_cksum);
         icmp6h->icmp6_cksum = sum1;
         nat46debug_dump(nat46, 10, icmp6h, l3_infrag_payload_len);
