@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+gcov=false
+kasan=false
+
+while IFS= read -r path || [ -n "$path" ]; do
+  case "$path" in
+    .github/workflows/c-compile.yml)
+      gcov=true
+      kasan=true
+      ;;
+    .github/workflows/c-compile-gcov.yml|test-harness/*|nat46/modules/*)
+      gcov=true
+      ;;
+  esac
+  case "$path" in
+    .github/workflows/c-compile-kasan.yml|test-harness/*|nat46/modules/*)
+      kasan=true
+      ;;
+  esac
+done
+
+printf 'gcov=%s\n' "$gcov"
+printf 'kasan=%s\n' "$kasan"
