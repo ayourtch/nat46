@@ -17,6 +17,8 @@ SHORT_TRANSPORT_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-short-transport/inject-tap0.jsonl")
 MINIMUM_PAYLOAD_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-minimum-payload/inject-tap0.jsonl")
+ATOMIC_FRAGMENT_FIXTURE = Path(
+    "test-harness/tests/ipv6-quote-atomic-fragment/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -98,6 +100,16 @@ def main():
                                  LOCAL_V6, REMOTE_V6)
                      + quoted_payload)
     write_icmpv6_error_fixture(LONG_QUOTE_FIXTURE, quoted_packet)
+
+    packet = icmpv6_error_packet(quoted_packet)
+    outer_ip6 = packet["layers"][1]
+    outer_payload = packet["layers"][2]["data"]
+    atomic_fragment = struct.pack("!BBHI", 58, 0, 0, 0x12345678)
+    outer_ip6["payload_length"] += len(atomic_fragment)
+    outer_ip6["next_header"] = 44
+    packet["layers"][2]["data"] = list(atomic_fragment) + outer_payload
+    ATOMIC_FRAGMENT_FIXTURE.write_text(
+        json.dumps(packet, separators=(",", ":")) + "\n")
 
     partial_fragment = struct.pack("!BBH", 17, 0, 0)
     quoted_packet = (ipv6_header(8, 44, LOCAL_V6, REMOTE_V6)

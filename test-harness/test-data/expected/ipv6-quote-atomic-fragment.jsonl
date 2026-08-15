@@ -1,0 +1,2 @@
+# packet assertion
+{"expected_rx_count":1,"checks":[{"count":1,"packet":{"direction":"rx","valid_checksums":true,"layers":[{"layertype":"Ip","src":"8.8.8.8","dst":"192.168.1.100","proto":1,"len":56},{"layertype":"Icmp","typ":3,"code":1,"nonzero_fields":["chksum"]},{"layertype":"raw","data_prefix":[0,0,0,0,69,0,0,28]}]}}]}
