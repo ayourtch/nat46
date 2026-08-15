@@ -1080,7 +1080,7 @@ static u32 *icmp6_parameter_ptr(struct icmp6hdr *icmp6h) {
   return icmp6_pptr;
 }
 
-static void nat46_fixup_icmp6_dest_unreach(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
+static void nat46_fixup_icmp6_dest_unreach(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize, int len) {
   /*
    * Destination Unreachable (Type 1)  Set the Type to 3, and adjust
    * the ICMP checksum both to take the type/code change into
@@ -1109,8 +1109,6 @@ static void nat46_fixup_icmp6_dest_unreach(nat46_instance_t *nat46, struct ipv6h
    * Other Code values:  Silently drop.
    */
 
-  int len;
-
   switch(icmp6h->icmp6_code) {
     case 0:
     case 2:
@@ -1126,11 +1124,10 @@ static void nat46_fixup_icmp6_dest_unreach(nat46_instance_t *nat46, struct ipv6h
     default:
       ip6h->nexthdr = NEXTHDR_NONE;
   }
-  len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
 }
 
-static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
+static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize, int len) {
   /*
    * Packet Too Big (Type 2):  Translate to an ICMPv4 Destination
    * Unreachable (Type 3) with Code 4, and adjust the ICMPv4
@@ -1165,7 +1162,6 @@ static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr
    *            b.  If the packet is greater than 1280 bytes, the translator
    *                SHOULD set the IPv4 DF bit to 1.
    */
-  int len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
   u16 *pmtu = ((u16 *)icmp6h) + 3; /* IPv4-compatible MTU value is 16 bit */
   u16 old_csum = icmp6h->icmp6_cksum;
 
@@ -1180,19 +1176,18 @@ static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr
 
 }
 
-static void nat46_fixup_icmp6_time_exceed(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
+static void nat46_fixup_icmp6_time_exceed(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize, int len) {
   /*
    * Time Exceeded (Type 3):  Set the Type to 11, and adjust the ICMPv4
    * checksum both to take the type change into account and to
    * exclude the ICMPv6 pseudo-header.  The Code is unchanged.
    */
-  int len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
 
   update_icmp6_type_code(nat46, icmp6h, 11, icmp6h->icmp6_code);
 }
 
-static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
+static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize, int len) {
   /*
    *         Parameter Problem (Type 4):  Translate the Type and Code as
    *         follows, and adjust the ICMPv4 checksum both to take the type/
@@ -1233,8 +1228,6 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
   u32 *pptr6 = icmp6_parameter_ptr(icmp6h);
   u8 *pptr4 = icmp_parameter_ptr((struct icmphdr *)icmp6h);
   int new_pptr = -1;
-  int len = ntohs(ip6h->payload_len)-sizeof(*icmp6h);
-
   switch(icmp6h->icmp6_code) {
     case 0:
       if(*pptr6 < sizeof(ptr6_4)/sizeof(ptr6_4[0])) {
@@ -1267,7 +1260,7 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
 
 /* Fixup ICMP6->ICMP before IP header translation, according to http://tools.ietf.org/html/rfc6145 */
 
-static void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize) {
+static void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize, int len) {
 
   if(icmp6h->icmp6_type & 128) {
     /* Informational ICMP */
@@ -1285,16 +1278,16 @@ static void nat46_fixup_icmp6(nat46_instance_t *nat46, struct ipv6hdr *ip6h, str
     /* ICMPv6 errors */
     switch(icmp6h->icmp6_type) {
       case ICMPV6_DEST_UNREACH:
-        nat46_fixup_icmp6_dest_unreach(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
+        nat46_fixup_icmp6_dest_unreach(nat46, ip6h, icmp6h, old_skb, ptailTruncSize, len);
         break;
       case ICMPV6_PKT_TOOBIG:
-        nat46_fixup_icmp6_pkt_toobig(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
+        nat46_fixup_icmp6_pkt_toobig(nat46, ip6h, icmp6h, old_skb, ptailTruncSize, len);
         break;
       case ICMPV6_TIME_EXCEED:
-        nat46_fixup_icmp6_time_exceed(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
+        nat46_fixup_icmp6_time_exceed(nat46, ip6h, icmp6h, old_skb, ptailTruncSize, len);
         break;
       case ICMPV6_PARAMPROB:
-        nat46_fixup_icmp6_paramprob(nat46, ip6h, icmp6h, old_skb, ptailTruncSize);
+        nat46_fixup_icmp6_paramprob(nat46, ip6h, icmp6h, old_skb, ptailTruncSize, len);
         break;
       default:
         ip6h->nexthdr = NEXTHDR_NONE;
@@ -1789,7 +1782,8 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
         sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_ICMP, icmp6h->icmp6_cksum);
         icmp6h->icmp6_cksum = sum1;
         nat46debug_dump(nat46, 10, icmp6h, l3_infrag_payload_len);
-        nat46_fixup_icmp6(nat46, ip6h, icmp6h, old_skb, &tailTruncSize);
+        nat46_fixup_icmp6(nat46, ip6h, icmp6h, old_skb, &tailTruncSize,
+                          l3_infrag_payload_len - sizeof(*icmp6h));
         proto = IPPROTO_ICMP;
         break;
         }
