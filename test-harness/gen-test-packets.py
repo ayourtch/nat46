@@ -13,6 +13,8 @@ LONG_QUOTE_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-long-length/inject-tap0.jsonl")
 SHORT_FRAGMENT_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-short-fragment/inject-tap0.jsonl")
+SHORT_TRANSPORT_FIXTURE = Path(
+    "test-harness/tests/ipv6-quote-short-transport/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -47,14 +49,14 @@ def udp_checksum(src, dst, sport, dport, payload):
     return checksum(pseudoheader + udp)
 
 
-def write_icmpv6_error_fixture(path, quoted_packet):
+def icmpv6_error_packet(quoted_packet, timestamp_us=1000000):
     icmp = bytearray(bytes([1, 0, 0, 0, 0, 0, 0, 0]) + quoted_packet)
     outer_src = REMOTE_V6
     outer_dst = LOCAL_V6
     struct.pack_into("!H", icmp, 2,
                      icmpv6_checksum(outer_src, outer_dst, icmp))
     packet = {
-        "timestamp_us": 1000000,
+        "timestamp_us": timestamp_us,
         "layers": [
             {
                 "layertype": "ether",
@@ -74,6 +76,11 @@ def write_icmpv6_error_fixture(path, quoted_packet):
             {"layertype": "raw", "data": list(icmp)},
         ],
     }
+    return packet
+
+
+def write_icmpv6_error_fixture(path, quoted_packet):
+    packet = icmpv6_error_packet(quoted_packet)
     path.write_text(json.dumps(packet, separators=(",", ":")) + "\n")
 
 
@@ -93,6 +100,27 @@ def main():
     quoted_packet = (ipv6_header(8, 44, LOCAL_V6, REMOTE_V6)
                      + partial_fragment)
     write_icmpv6_error_fixture(SHORT_FRAGMENT_FIXTURE, quoted_packet)
+
+    short_transport_cases = (
+        ("tcp-empty", 6, 20, 0),
+        ("tcp-boundary", 6, 20, 19),
+        ("udp-empty", 17, 8, 0),
+        ("udp-boundary", 17, 8, 7),
+        ("icmp-empty", 58, 8, 0),
+        ("icmp-boundary", 58, 8, 7),
+    )
+    packets = []
+    for index, (_name, protocol, required_length, quoted_length) in enumerate(
+            short_transport_cases):
+        quoted_payload = bytes(range(1, quoted_length + 1))
+        quoted_packet = (ipv6_header(required_length, protocol,
+                                     LOCAL_V6, REMOTE_V6)
+                         + quoted_payload)
+        packets.append(icmpv6_error_packet(
+            quoted_packet, timestamp_us=1000000 + index * 100000))
+    SHORT_TRANSPORT_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in packets))
 
 
 if __name__ == "__main__":
