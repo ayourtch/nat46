@@ -1752,11 +1752,37 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
         }
         if (!(icmp6h->icmp6_type & 128)) {
           struct ipv6hdr *quoted_ip6h = (struct ipv6hdr *)(icmp6h + 1);
+          struct frag_hdr *quoted_fh;
           int quoted_len = l3_infrag_payload_len - sizeof(*icmp6h);
+          int transport_offset = sizeof(*quoted_ip6h);
+          int transport_header_len = 0;
+          u8 quoted_proto = quoted_ip6h->nexthdr;
 
-          if (quoted_ip6h->nexthdr == NEXTHDR_FRAGMENT &&
-              quoted_len < sizeof(*quoted_ip6h) + sizeof(struct frag_hdr)) {
-            nat46debug(0, "[nat46] ICMPv6 quote too short for Fragment header");
+          if (quoted_proto == NEXTHDR_FRAGMENT) {
+            if (quoted_len < sizeof(*quoted_ip6h) + sizeof(*quoted_fh)) {
+              nat46debug(0, "[nat46] ICMPv6 quote too short for Fragment header");
+              goto done;
+            }
+            quoted_fh = (struct frag_hdr *)(quoted_ip6h + 1);
+            if (quoted_fh->frag_off == 0) {
+              quoted_proto = quoted_fh->nexthdr;
+              transport_offset += sizeof(*quoted_fh);
+            }
+          }
+          switch(quoted_proto) {
+            case NEXTHDR_TCP:
+              transport_header_len = sizeof(struct tcphdr);
+              break;
+            case NEXTHDR_UDP:
+              transport_header_len = sizeof(struct udphdr);
+              break;
+            case NEXTHDR_ICMP:
+              transport_header_len = sizeof(struct icmp6hdr);
+              break;
+          }
+          if (transport_header_len &&
+              quoted_len < transport_offset + transport_header_len) {
+            nat46debug(0, "[nat46] ICMPv6 quote too short for transport header");
             goto done;
           }
         }
