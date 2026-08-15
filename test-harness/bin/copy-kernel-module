@@ -1,0 +1,62 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ "$#" -ne 3 ]; then
+  echo "usage: $0 MODULE_ROOT MODULE_NAME DESTINATION" >&2
+  exit 2
+fi
+
+MODULE_ROOT=$1
+MODULE_NAME=$2
+DESTINATION=$3
+matches=()
+builtin_matches=()
+
+while IFS= read -r path; do
+  matches+=("$path")
+done < <(find "$MODULE_ROOT" -type f \
+  \( -name "${MODULE_NAME}.ko" -o -name "${MODULE_NAME}.ko.xz" \
+     -o -name "${MODULE_NAME}.ko.zst" -o -name "${MODULE_NAME}.ko.gz" \) \
+  -print)
+
+if [ "${#matches[@]}" -eq 0 ] && [ -f "$MODULE_ROOT/modules.builtin" ]; then
+  while IFS= read -r path; do
+    if [ "${path##*/}" = "${MODULE_NAME}.ko" ]; then
+      builtin_matches+=("$path")
+    fi
+  done < "$MODULE_ROOT/modules.builtin"
+fi
+
+if [ "${#matches[@]}" -eq 0 ] && [ "${#builtin_matches[@]}" -eq 1 ]; then
+  echo "Using built-in kernel dependency ${MODULE_NAME}.ko"
+  exit 0
+fi
+
+if [ "${#matches[@]}" -ne 1 ]; then
+  if [ "${#builtin_matches[@]}" -gt 1 ]; then
+    echo "Error: expected exactly one built-in ${MODULE_NAME}.ko dependency in ${MODULE_ROOT}/modules.builtin, found ${#builtin_matches[@]}" >&2
+    exit 1
+  fi
+  echo "Error: expected exactly one ${MODULE_NAME}.ko dependency below ${MODULE_ROOT}, found ${#matches[@]}" >&2
+  exit 1
+fi
+
+case "${matches[0]}" in
+  *.ko)
+    cp -- "${matches[0]}" "$DESTINATION"
+    ;;
+  *.ko.xz)
+    xz -dc -- "${matches[0]}" > "$DESTINATION"
+    ;;
+  *.ko.zst)
+    zstd -q -d -c -- "${matches[0]}" > "$DESTINATION"
+    ;;
+  *.ko.gz)
+    gzip -dc -- "${matches[0]}" > "$DESTINATION"
+    ;;
+esac
+
+if [ ! -s "$DESTINATION" ]; then
+  echo "Error: copied module ${DESTINATION} is empty" >&2
+  exit 1
+fi

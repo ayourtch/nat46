@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Validate the authoritative test plan and select a non-empty test set."""
+
+from pathlib import Path
+import sys
+
+
+def fail(message: str) -> int:
+    print(f"error: {message}", file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    if len(sys.argv) not in (3, 4):
+        print(
+            f"usage: {sys.argv[0]} TEST_ROOT TEST_PLAN [FILTER]",
+            file=sys.stderr,
+        )
+        return 2
+
+    test_root = Path(sys.argv[1])
+    plan_path = Path(sys.argv[2])
+    if not test_root.is_dir():
+        return fail(f"test root is not a directory: {test_root}")
+    if not plan_path.is_file():
+        return fail(f"test plan is not a file: {plan_path}")
+
+    planned: list[str] = []
+    seen: set[str] = set()
+    for line_number, raw_line in enumerate(plan_path.read_text().splitlines(), 1):
+        test_name = raw_line.strip()
+        if not test_name or test_name.startswith("#"):
+            continue
+        if "/" in test_name or test_name in {".", ".."}:
+            return fail(
+                f"invalid test name on {plan_path}:{line_number}: {test_name}"
+            )
+        if test_name in seen:
+            return fail(f"duplicate test in {plan_path}: {test_name}")
+        seen.add(test_name)
+        planned.append(test_name)
+
+    if not planned:
+        return fail(f"test plan is empty: {plan_path}")
+
+    available = {
+        entry.name
+        for entry in test_root.iterdir()
+        if entry.is_dir() and (entry / "test.run").is_file()
+    }
+    missing = [test_name for test_name in planned if test_name not in available]
+    unlisted = sorted(available - seen)
+    if missing:
+        return fail("listed test directory is missing: " + ", ".join(missing))
+    if unlisted:
+        return fail("test directories are absent from the plan: " + ", ".join(unlisted))
+
+    filters: list[str] = []
+    if len(sys.argv) == 4:
+        raw_filter = sys.argv[3]
+        filters = [part.strip() for part in raw_filter.split(",") if part.strip()]
+        if raw_filter and not filters:
+            return fail(f"test filter has no usable terms: {raw_filter}")
+
+    selected = [
+        test_name
+        for test_name in planned
+        if not filters or any(part in test_name for part in filters)
+    ]
+    if not selected:
+        requested = sys.argv[3] if len(sys.argv) == 4 else "<all>"
+        return fail(f"test filter selected no tests: {requested}")
+
+    print("\n".join(selected))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

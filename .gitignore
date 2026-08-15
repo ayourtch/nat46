@@ -1,4 +1,5 @@
 test-harness/test-data/captured/*
+test-harness/test-data/coverage/
 test-harness/myinit
 test-harness/initrd.gz
 test-harness/initrd/

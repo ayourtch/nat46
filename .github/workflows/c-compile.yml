@@ -1,25 +1,41 @@
 on:
-  - push
-  - pull_request
-  - workflow_dispatch
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Only run tests whose name contains this substring (comma-separated).'
+        required: false
+        default: ''
 
 name: C/C++ CI prototype
-  
+
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
     - uses: actions/checkout@v4
-    - name: build the NAT46 module
+      with:
+        persist-credentials: false
+    - name: Install dependencies
+      run: |
+        kernel_headers="linux-headers-$(uname -r)"
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cpio gzip jq kmod "$kernel_headers" \
+          qemu-system-x86 wget coreutils python3 xz-utils zstd
+    - name: Build the NAT46 module
       run: |
         cd nat46/modules
         NAT46_VERSION=ci KCPPFLAGS=-Werror make
-    - name: Install kvm
-      run: |
-        sudo apt-get update
-        sudo apt-get install qemu-system-x86
-    - name: Install and run test harness
+    - name: Run the basic VM test
+      env:
+        TEST_FILTER: ${{ inputs.test_filter }}
+        QEMU_TIMEOUT: 30m
       run: |
         cd test-harness
         ./run-test-harness
-
