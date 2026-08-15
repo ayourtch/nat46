@@ -1005,6 +1005,10 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
     }
   }
 
+  /* An ICMP quote may contain less payload than the inner header advertises. */
+  if (infrag_payload_len > v6_len - sizeof(struct ipv6hdr)) {
+    infrag_payload_len = v6_len - sizeof(struct ipv6hdr);
+  }
 
   switch(proto) {
     case NEXTHDR_TCP: {
@@ -2102,4 +2106,3 @@ done:
   release_nat46_instance(nat46);
   return err;
 }
-
