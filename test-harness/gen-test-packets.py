@@ -9,7 +9,10 @@ import struct
 
 LOCAL_V6 = "2001:db8:1:1::1"
 REMOTE_V6 = "2001:4860:4860::8888"
-FIXTURE = Path("test-harness/tests/ipv6-quote-long-length/inject-tap0.jsonl")
+LONG_QUOTE_FIXTURE = Path(
+    "test-harness/tests/ipv6-quote-long-length/inject-tap0.jsonl")
+SHORT_FRAGMENT_FIXTURE = Path(
+    "test-harness/tests/ipv6-quote-short-fragment/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -44,16 +47,7 @@ def udp_checksum(src, dst, sport, dport, payload):
     return checksum(pseudoheader + udp)
 
 
-def main():
-    advertised_payload_len = 1000
-    original_payload = bytes([42]) * (advertised_payload_len - 8)
-    quoted_checksum = udp_checksum(LOCAL_V6, REMOTE_V6, 53, 54,
-                                   original_payload)
-    quoted_payload = struct.pack("!HHHH", 53, 54, advertised_payload_len,
-                                 quoted_checksum)
-    quoted_packet = (ipv6_header(advertised_payload_len, 17,
-                                 LOCAL_V6, REMOTE_V6)
-                     + quoted_payload)
+def write_icmpv6_error_fixture(path, quoted_packet):
     icmp = bytearray(bytes([1, 0, 0, 0, 0, 0, 0, 0]) + quoted_packet)
     outer_src = REMOTE_V6
     outer_dst = LOCAL_V6
@@ -80,7 +74,25 @@ def main():
             {"layertype": "raw", "data": list(icmp)},
         ],
     }
-    FIXTURE.write_text(json.dumps(packet, separators=(",", ":")) + "\n")
+    path.write_text(json.dumps(packet, separators=(",", ":")) + "\n")
+
+
+def main():
+    advertised_payload_len = 1000
+    original_payload = bytes([42]) * (advertised_payload_len - 8)
+    quoted_checksum = udp_checksum(LOCAL_V6, REMOTE_V6, 53, 54,
+                                   original_payload)
+    quoted_payload = struct.pack("!HHHH", 53, 54, advertised_payload_len,
+                                 quoted_checksum)
+    quoted_packet = (ipv6_header(advertised_payload_len, 17,
+                                 LOCAL_V6, REMOTE_V6)
+                     + quoted_payload)
+    write_icmpv6_error_fixture(LONG_QUOTE_FIXTURE, quoted_packet)
+
+    partial_fragment = struct.pack("!BBH", 17, 0, 0)
+    quoted_packet = (ipv6_header(8, 44, LOCAL_V6, REMOTE_V6)
+                     + partial_fragment)
+    write_icmpv6_error_fixture(SHORT_FRAGMENT_FIXTURE, quoted_packet)
 
 
 if __name__ == "__main__":
