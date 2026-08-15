@@ -15,6 +15,8 @@ SHORT_FRAGMENT_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-short-fragment/inject-tap0.jsonl")
 SHORT_TRANSPORT_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-short-transport/inject-tap0.jsonl")
+MINIMUM_PAYLOAD_FIXTURE = Path(
+    "test-harness/tests/ipv6-quote-minimum-payload/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -49,7 +51,8 @@ def udp_checksum(src, dst, sport, dport, payload):
     return checksum(pseudoheader + udp)
 
 
-def icmpv6_error_packet(quoted_packet, timestamp_us=1000000):
+def icmpv6_error_packet(quoted_packet, timestamp_us=1000000,
+                        trailing_data=b""):
     icmp = bytearray(bytes([1, 0, 0, 0, 0, 0, 0, 0]) + quoted_packet)
     outer_src = REMOTE_V6
     outer_dst = LOCAL_V6
@@ -73,7 +76,7 @@ def icmpv6_error_packet(quoted_packet, timestamp_us=1000000):
                 "src": outer_src,
                 "dst": outer_dst,
             },
-            {"layertype": "raw", "data": list(icmp)},
+            {"layertype": "raw", "data": list(icmp + trailing_data)},
         ],
     }
     return packet
@@ -121,6 +124,18 @@ def main():
     SHORT_TRANSPORT_FIXTURE.write_text("".join(
         json.dumps(packet, separators=(",", ":")) + "\n"
         for packet in packets))
+
+    quoted_icmp = bytearray(bytes([128, 0, 0, 0, 0x12, 0x34, 0x56, 0x78]))
+    struct.pack_into(
+        "!H", quoted_icmp, 2,
+        icmpv6_checksum(LOCAL_V6, REMOTE_V6, quoted_icmp))
+    quoted_packet = (ipv6_header(len(quoted_icmp), 58,
+                                 LOCAL_V6, REMOTE_V6)
+                     + quoted_icmp)
+    trailing_data = bytes(range(0xa0, 0xb4))
+    packet = icmpv6_error_packet(quoted_packet, trailing_data=trailing_data)
+    MINIMUM_PAYLOAD_FIXTURE.write_text(
+        json.dumps(packet, separators=(",", ":")) + "\n")
 
 
 if __name__ == "__main__":
