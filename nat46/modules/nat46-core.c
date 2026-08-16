@@ -2649,11 +2649,11 @@ static int xlate_payload4_to6(nat46_instance_t *nat46, struct sk_buff *skb,
   inner_ttl = inner_iph->ttl;
   inner_tos = ip_tos_ignore ? 0 : ipv4_get_dsfield(inner_iph);
   inner_payload_len = ntohs(inner_iph->tot_len) - inner_ihl;
-  available_l4 = inner_quoted_len - inner_ihl;
   quote_tail_len = inner_quoted_len - inner_ihl;
-  if (available_l4 > inner_payload_len) {
-    available_l4 = inner_payload_len;
+  if (quote_tail_len > inner_payload_len) {
+    quote_tail_len = inner_payload_len;
   }
+  available_l4 = quote_tail_len;
   old_l4 = add_offset(inner_iph, inner_ihl);
   first_fragment = !(ntohs(inner_frag_off) & IP_OFFSET);
   add_frag_header = !!(ntohs(inner_frag_off) & (IP_OFFSET | IP_MF));
