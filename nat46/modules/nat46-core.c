@@ -791,6 +791,11 @@ static __sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
   return htons((u16)(~s));
 }
 
+static __sum16 udp_csum_mangle_zero(__sum16 csum)
+{
+  return csum ? csum : CSUM_MANGLED_0;
+}
+
 static __sum16 csum_v4_to_v6_addr(__sum16 csum,
                                   const struct iphdr *iph,
                                   const struct ipv6hdr *ip6h) {
@@ -1153,6 +1158,7 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
       }
       sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, infrag_payload_len, NEXTHDR_UDP, udp->check);
       sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, infrag_payload_len, NEXTHDR_UDP, sum1); /* add pseudoheader */
+      sum2 = udp_csum_mangle_zero(sum2);
       if(ul_sum) {
         *ul_sum = csum16_upd(*ul_sum, udp->check, sum2);
         }
@@ -1900,7 +1906,7 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
         }
         sum1 = csum_ipv6_unmagic(nat46, &ip6h->saddr, &ip6h->daddr, l3_infrag_payload_len, NEXTHDR_UDP, udp->check);
         sum2 = csum_tcpudp_remagic(v4saddr, v4daddr, l3_infrag_payload_len, NEXTHDR_UDP, sum1);
-        udp->check = sum2;
+        udp->check = udp_csum_mangle_zero(sum2);
         break;
         }
       case NEXTHDR_ICMP: {
@@ -2067,7 +2073,8 @@ static void ip6_update_csum(struct sk_buff *skb, struct iphdr *ip4hdr,
 
       oldsum = udp->check;
       if (input_is_fragment) {
-        udp->check = csum_v4_to_v6_addr(oldsum, ip4hdr, ip6hdr);
+        udp->check = udp_csum_mangle_zero(
+            csum_v4_to_v6_addr(oldsum, ip4hdr, ip6hdr));
         break;
       }
       /* RFC 768 defines this length as the UDP header and data only. */
@@ -2077,7 +2084,7 @@ static void ip6_update_csum(struct sk_buff *skb, struct iphdr *ip4hdr,
       sum1 = csum_partial((char*)udp, udplen, 0); /* calculate checksum for UDP hdr+payload */
       sum2 = csum_ipv6_magic(&ip6hdr->saddr, &ip6hdr->daddr, udplen, ip6hdr->nexthdr, sum1); /* add pseudoheader */
 
-      udp->check = sum2;
+      udp->check = udp_csum_mangle_zero(sum2);
 
       break;
       }
