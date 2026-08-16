@@ -1370,15 +1370,19 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
                           12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
                           16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, -1 };
   u32 *pptr6 = icmp6_parameter_ptr(icmp6h);
-  u8 *pptr4 = icmp_parameter_ptr((struct icmphdr *)icmp6h);
+  u32 pptr_val = ntohl(*pptr6);
   int new_pptr = -1;
   switch(icmp6h->icmp6_code) {
     case 0:
-      if(*pptr6 < sizeof(ptr6_4)/sizeof(ptr6_4[0])) {
-        new_pptr = ptr6_4[*pptr6];
+      if(pptr_val < sizeof(ptr6_4)/sizeof(ptr6_4[0])) {
+        new_pptr = ptr6_4[pptr_val];
         if (new_pptr >= 0) {
-          icmp6h->icmp6_cksum = csum16_upd(icmp6h->icmp6_cksum, (*pptr6 & 0xffff), (new_pptr << 8));
-          *pptr4 = 0xff & new_pptr;
+          icmp6h->icmp6_cksum = csum16_upd(
+              icmp6h->icmp6_cksum, htons((u16)(pptr_val >> 16)),
+              htons((u16)(new_pptr << 8)));
+          icmp6h->icmp6_cksum = csum16_upd(
+              icmp6h->icmp6_cksum, htons((u16)pptr_val), 0);
+          *pptr6 = htonl((u32)new_pptr << 24);
           update_icmp6_type_code(nat46, icmp6h, 12, 0);
           len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
           if (!len) {
@@ -1392,8 +1396,10 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
       }
       break;
     case 1:
-      icmp6h->icmp6_cksum = csum16_upd(icmp6h->icmp6_cksum, ((*pptr6 >> 16) & 0xffff), 0);
-      icmp6h->icmp6_cksum = csum16_upd(icmp6h->icmp6_cksum, (*pptr6 & 0xffff), 0);
+      icmp6h->icmp6_cksum = csum16_upd(
+          icmp6h->icmp6_cksum, htons((u16)(pptr_val >> 16)), 0);
+      icmp6h->icmp6_cksum = csum16_upd(
+          icmp6h->icmp6_cksum, htons((u16)pptr_val), 0);
       *pptr6 = 0;
       update_icmp6_type_code(nat46, icmp6h, 3, 2);
       len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
