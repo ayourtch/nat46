@@ -217,13 +217,74 @@ def reassemble_ipv6_fragments(packet: dict, packets):
     return reassembled_network, protocol, b"".join(segment_parts)
 
 
+def validate_quoted_icmp_checksum(network: dict, outer_segment: bytes) -> None:
+    if network["layertype"] == "Ipv6":
+        if network["next_header"] != 58:
+            raise ValueError("outer IPv6 packet is not ICMPv6")
+    elif network["layertype"] == "Ip":
+        if network["proto"] != 1:
+            raise ValueError("outer IPv4 packet is not ICMP")
+    else:
+        raise ValueError("quoted ICMP checksum requires an IP outer packet")
+    if len(outer_segment) < 8:
+        raise ValueError("outer ICMP error is too short for a quote")
+
+    quoted = outer_segment[8:]
+    if not quoted:
+        raise ValueError("outer ICMP error has no quoted packet")
+    version = quoted[0] >> 4
+    if version == 4:
+        if len(quoted) < 20:
+            raise ValueError("quoted IPv4 header is truncated")
+        header_length = (quoted[0] & 0x0f) * 4
+        total_length = struct.unpack_from("!H", quoted, 2)[0]
+        if (header_length < 20 or total_length < header_length
+                or total_length > len(quoted)):
+            raise ValueError("quoted IPv4 length fields are invalid")
+        if quoted[9] != 1:
+            raise ValueError("quoted IPv4 packet is not ICMP")
+        inner_segment = quoted[header_length:total_length]
+        if len(inner_segment) < 4:
+            raise ValueError("quoted ICMPv4 checksum field is truncated")
+        if checksum(inner_segment) != 0:
+            raise ValueError(invalid_checksum_message(
+                "quoted ICMPv4", inner_segment, 2, len(inner_segment)
+            ))
+        return
+
+    if version == 6:
+        if len(quoted) < 40:
+            raise ValueError("quoted IPv6 header is truncated")
+        payload_length = struct.unpack_from("!H", quoted, 4)[0]
+        total_length = 40 + payload_length
+        if total_length > len(quoted):
+            raise ValueError("quoted IPv6 payload is truncated")
+        if quoted[6] != 58:
+            raise ValueError("quoted IPv6 packet is not ICMPv6")
+        inner_segment = quoted[40:total_length]
+        if len(inner_segment) < 4:
+            raise ValueError("quoted ICMPv6 checksum field is truncated")
+        pseudoheader = (quoted[8:24] + quoted[24:40]
+                        + struct.pack("!I3xB", len(inner_segment), 58))
+        checked = pseudoheader + inner_segment
+        if checksum(checked) != 0:
+            raise ValueError(invalid_checksum_message(
+                "quoted ICMPv6", checked,
+                len(pseudoheader) + 2, len(inner_segment)
+            ))
+        return
+
+    raise ValueError(f"quoted packet has unsupported IP version {version}")
+
+
 def validate(packet: dict, packets,
-             require_udp_padding_excluded: bool = False) -> None:
+             require_udp_padding_excluded: bool = False,
+             require_quoted_icmp_checksum: bool = False) -> None:
     network, packet_bytes, _network_payload = serialized_network_packet(packet)
 
     if network["layertype"] == "Ipv6" and network["next_header"] == 44:
         network, protocol, segment = reassemble_ipv6_fragments(packet, packets)
-        transport = {6: "Tcp", 17: "Udp"}.get(protocol)
+        transport = {6: "Tcp", 17: "Udp", 58: "Icmpv6"}.get(protocol)
         if transport is None:
             return
     else:
@@ -272,6 +333,8 @@ def validate(packet: dict, packets,
         raise ValueError(invalid_checksum_message(
             transport, checked, checksum_offset, checksum_length
         ))
+    if require_quoted_icmp_checksum:
+        validate_quoted_icmp_checksum(network, segment)
     if require_udp_padding_excluded:
         if transport != "Udp":
             raise ValueError(
@@ -330,6 +393,8 @@ def main() -> int:
                             expected.get(
                                 "udp_checksum_excludes_trailing_padding",
                                 False),
+                            expected.get(
+                                "valid_quoted_icmp_checksum", False),
                         )
                     except (KeyError, StopIteration, ValueError) as error:
                         raise ValueError(

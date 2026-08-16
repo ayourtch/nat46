@@ -29,3 +29,4 @@ icmp-quote-ipv4-padding
 v4-udp-padding-checksum
 udp-zero-checksum
 rfc6052-canonical
+icmp-quote-echo-checksum

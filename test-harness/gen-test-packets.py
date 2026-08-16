@@ -83,6 +83,10 @@ QUOTED_IPV4_PADDING_FIXTURE = Path(
     "test-harness/tests/icmp-quote-ipv4-padding/inject-tap0.jsonl")
 QUOTED_IPV4_PADDING_EXPECTED = Path(
     "test-harness/test-data/expected/icmp-quote-ipv4-padding.jsonl")
+QUOTED_ICMP_ECHO_CHECKSUM_FIXTURE = Path(
+    "test-harness/tests/icmp-quote-echo-checksum/inject-tap0.jsonl")
+QUOTED_ICMP_ECHO_CHECKSUM_EXPECTED = Path(
+    "test-harness/test-data/expected/icmp-quote-echo-checksum.jsonl")
 
 
 def checksum(data):
@@ -453,6 +457,233 @@ def generate_quoted_ipv4_padding():
         json.dumps(packet, separators=(",", ":")) + "\n"
         for packet in packets))
     QUOTED_IPV4_PADDING_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": 2,
+            "checks": checks,
+        }, separators=(",", ":")) + "\n")
+
+
+def checksum_update(checksum_value, old_value, new_value):
+    total = ((~checksum_value & 0xffff)
+             + (~old_value & 0xffff) + new_value)
+    total = (total & 0xffff) + (total >> 16)
+    total = (total & 0xffff) + (total >> 16)
+    return ~total & 0xffff
+
+
+def generate_quoted_icmp_echo_checksums():
+    def source_echo(icmp_type, identifier, sequence, marker):
+        echo = bytearray(
+            struct.pack("!BBHHH", icmp_type, 0, 0, identifier, sequence)
+            + marker)
+        struct.pack_into(
+            "!H", echo, 2,
+            icmpv6_checksum(LOCAL_V6, REMOTE_V6, echo))
+        assert icmpv6_checksum(LOCAL_V6, REMOTE_V6, echo) == 0
+        return bytes(echo)
+
+    def translated_echo(icmp_type, identifier, sequence, marker):
+        echo = bytearray(
+            struct.pack("!BBHHH", icmp_type, 0, 0, identifier, sequence)
+            + marker)
+        struct.pack_into("!H", echo, 2, checksum(echo))
+        assert checksum(echo) == 0
+        return bytes(echo)
+
+    cases = (
+        {
+            "timestamp_us": 1000000,
+            "outer_version_class": 0x60002101,
+            "outer_type": 3,
+            "outer_code": 0,
+            "output_type": 11,
+            "output_code": 0,
+            "fragment_id": None,
+            "inner_type": 128,
+            "translated_inner_type": 8,
+            "echo_id": 0xe211,
+            "echo_sequence": 0x0101,
+            "marker": b"ECHO-ORDINARY-21",
+        },
+        {
+            "timestamp_us": 1100000,
+            "outer_version_class": 0x60002102,
+            "outer_type": 1,
+            "outer_code": 4,
+            "output_type": 3,
+            "output_code": 3,
+            "fragment_id": 0x21a7e222,
+            "inner_type": 129,
+            "translated_inner_type": 0,
+            "echo_id": 0xe212,
+            "echo_sequence": 0x0202,
+            "marker": b"ECHO-ATOMIC-0022",
+        },
+    )
+    packets = []
+    checks = []
+    unfragmented_flags = {
+        "reserved": False,
+        "dont_fragment": False,
+        "more_fragments": False,
+        "fragment_offset": 0,
+    }
+
+    for case in cases:
+        source_inner_echo = source_echo(
+            case["inner_type"], case["echo_id"],
+            case["echo_sequence"], case["marker"])
+        assert len(source_inner_echo) == 24
+        source_quote = (ipv6_header(
+            len(source_inner_echo), 58, LOCAL_V6, REMOTE_V6,
+            hop_limit=47)
+                        + source_inner_echo)
+        assert len(source_quote) == 64
+        packet = icmpv6_error_packet(
+            source_quote, case["timestamp_us"],
+            icmp_type=case["outer_type"],
+            icmp_code=case["outer_code"])
+        packet["layers"][1]["version_class"] = case["outer_version_class"]
+        source_outer_icmp = bytes(packet["layers"][2]["data"])
+        assert len(source_outer_icmp) == 72
+        assert icmpv6_checksum(
+            REMOTE_V6, LOCAL_V6, source_outer_icmp) == 0
+
+        if case["fragment_id"] is None:
+            source_layers = [
+                {
+                    "layertype": "Ipv6",
+                    "version_class": case["outer_version_class"],
+                    "payload_length": len(source_outer_icmp),
+                    "next_header": 58,
+                    "hop_limit": 63,
+                    "src": REMOTE_V6,
+                    "dst": LOCAL_V6,
+                },
+                {
+                    "layertype": "Icmpv6",
+                    "type_": case["outer_type"],
+                    "code": case["outer_code"],
+                    "checksum": struct.unpack_from(
+                        "!H", source_outer_icmp, 2)[0],
+                },
+                {
+                    "layertype": "icmpv6TimeExceeded",
+                    "unused": 0,
+                    "invoking_packet": list(source_quote),
+                },
+            ]
+        else:
+            outer_fragment = struct.pack(
+                "!BBHI", 58, 0, 0, case["fragment_id"])
+            packet["layers"][1]["payload_length"] += len(outer_fragment)
+            packet["layers"][1]["next_header"] = 44
+            packet["layers"][2]["data"] = list(
+                outer_fragment + source_outer_icmp)
+            source_layers = [
+                {
+                    "layertype": "Ipv6",
+                    "version_class": case["outer_version_class"],
+                    "payload_length": len(outer_fragment)
+                                      + len(source_outer_icmp),
+                    "next_header": 44,
+                    "hop_limit": 63,
+                    "src": REMOTE_V6,
+                    "dst": LOCAL_V6,
+                },
+                {
+                    "layertype": "raw",
+                    "data": list(outer_fragment + source_outer_icmp),
+                },
+            ]
+
+        packets.append(packet)
+        checks.append({
+            "count": 1,
+            "packet": {
+                "direction": "tx",
+                "valid_checksums": True,
+                "valid_quoted_icmp_checksum": True,
+                "layers": source_layers,
+            },
+        })
+
+        output_inner_echo = translated_echo(
+            case["translated_inner_type"], case["echo_id"],
+            case["echo_sequence"], case["marker"])
+        output_inner_ipv4 = (ipv4_header(
+            "192.168.1.100", "8.8.8.8", 1, len(output_inner_echo),
+            identification=0, ttl=47)
+                             + output_inner_echo)
+        assert len(output_inner_ipv4) == 44
+        output_outer_icmp = bytearray(struct.pack(
+            "!BBHI", case["output_type"], case["output_code"], 0, 0)
+                                      + output_inner_ipv4)
+        correct_outer_checksum = checksum(output_outer_icmp)
+        struct.pack_into(
+            "!H", output_outer_icmp, 2, correct_outer_checksum)
+        assert checksum(output_outer_icmp) == 0
+
+        pre_type_echo = bytearray(source_inner_echo)
+        struct.pack_into("!H", pre_type_echo, 2, 0)
+        pre_type_checksum = checksum(pre_type_echo)
+        final_inner_checksum = struct.unpack_from(
+            "!H", output_inner_echo, 2)[0]
+        buggy_outer_checksum = checksum_update(
+            correct_outer_checksum, pre_type_checksum,
+            final_inner_checksum)
+        buggy_outer_icmp = bytearray(output_outer_icmp)
+        struct.pack_into("!H", buggy_outer_icmp, 2, buggy_outer_checksum)
+        assert buggy_outer_checksum != correct_outer_checksum
+        assert checksum(buggy_outer_icmp) != 0
+
+        output_ip = {
+            "layertype": "Ip",
+            "version": 4,
+            "ihl": 5,
+            "tos": 0,
+            "len": 20 + len(output_outer_icmp),
+            "flags": unfragmented_flags,
+            "ttl": 63,
+            "proto": 1,
+            "src": "8.8.8.8",
+            "dst": "192.168.1.100",
+            "options": [],
+        }
+        if case["fragment_id"] is not None:
+            output_ip["id"] = case["fragment_id"] & 0xffff
+
+        def output_check(checksum_value, count, validate_checksums):
+            return {
+                "count": count,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": validate_checksums,
+                    "valid_quoted_icmp_checksum": validate_checksums,
+                    "layers": [
+                        output_ip,
+                        {
+                            "layertype": "Icmp",
+                            "typ": case["output_type"],
+                            "code": case["output_code"],
+                            "chksum": checksum_value,
+                        },
+                        {
+                            "layertype": "raw",
+                            "data": list(output_outer_icmp[4:]),
+                        },
+                    ],
+                },
+            }
+
+        checks.append(output_check(correct_outer_checksum, 1, True))
+        checks.append(output_check(buggy_outer_checksum, 0, False))
+
+    QUOTED_ICMP_ECHO_CHECKSUM_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in packets))
+    QUOTED_ICMP_ECHO_CHECKSUM_EXPECTED.write_text(
         "# packet assertion\n"
         + json.dumps({
             "expected_rx_count": 2,
@@ -1210,6 +1441,7 @@ def main():
     generate_quoted_fragmented_icmp()
     generate_quoted_source_routes()
     generate_quoted_ipv4_padding()
+    generate_quoted_icmp_echo_checksums()
 
     rfc6052_prefixes = (
         (32, "2001:db8::/32"),
