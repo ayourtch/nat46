@@ -1940,6 +1940,26 @@ static int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, 
   return 0;
 }
 
+static int nat46_map_rules_require_l4id(nat46_instance_t *nat46)
+{
+  int ipair;
+
+  for (ipair = 0; ipair < nat46->npairs; ipair++) {
+    nat46_xlate_rule_t *local = &nat46->pairs[ipair].local;
+    nat46_xlate_rule_t *remote = &nat46->pairs[ipair].remote;
+    int local_map = local->style == NAT46_XLATE_MAP ||
+                    local->style == NAT46_XLATE_MAP0;
+    int remote_map = remote->style == NAT46_XLATE_MAP ||
+                     remote->style == NAT46_XLATE_MAP0;
+
+    if ((local_map && local->ea_len > 32 - local->v4_pref_len) ||
+        (remote_map && remote->ea_len > 32 - remote->v4_pref_len)) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr4, uint16_t *sport, uint16_t *dport, void *v6saddr, void *v6daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
@@ -2016,10 +2036,14 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   l4_payload_len = ntohs(hdr4->tot_len) - v4packet_l3size;
   if(0 == (ntohs(hdr4->frag_off) & 0x3FFF) ) {
     check_for_l4 = 1;
-  } else if (IPPROTO_ICMP == hdr4->protocol) {
+  } else if (IPPROTO_ICMP == hdr4->protocol ||
+             (IPPROTO_TCP == hdr4->protocol &&
+              nat46_map_rules_require_l4id(nat46))) {
     /*
-     * receive fragmented ICMP:
-     * Need to reassemble it before processing.
+     * Fragmented ICMP must be reassembled before translating its type and
+     * quoted packet. A MAP rule with port-derived PSID bits likewise needs
+     * the TCP ports from the first fragment to derive one address for the
+     * complete datagram.
      */
     err = try_reassembly(old_skb);
     if (err) {
