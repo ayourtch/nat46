@@ -990,16 +990,26 @@ static int walk_ipv6_xlate_headers(struct sk_buff *skb, u8 *proto,
 }
 
 
+static bool quoted_ipv6_fragment_is_atomic(const struct frag_hdr *fh) {
+  return !(ntohs(fh->frag_off) & (IP6_OFFSET | IP6_MF));
+}
+
 /* FIXME: traverse the headers properly */
 static void *get_next_header_ptr6(void *pv6, int v6_len) {
   struct ipv6hdr *ip6h = pv6;
   void *ret = (ip6h+1);
 
+  if (v6_len < (int)sizeof(*ip6h)) {
+    return NULL;
+  }
   if (ip6h->nexthdr == NEXTHDR_FRAGMENT) {
     struct frag_hdr *fh = (struct frag_hdr*)(ip6h + 1);
-    if(fh->frag_off == 0) {
+    if (v6_len < (int)(sizeof(*ip6h) + sizeof(*fh))) {
+      return NULL;
+    }
+    if (quoted_ipv6_fragment_is_atomic(fh)) {
       /* Atomic fragment */
-      ret = add_offset(ret, 8);
+      ret = add_offset(ret, sizeof(*fh));
     }
   }
   return ret;
@@ -1091,6 +1101,7 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
   int infrag_payload_len = ntohs(ip6h->payload_len);
   u16 ipflags = htons(infrag_payload_len + sizeof(struct iphdr) > 1260 ?
                       IP_DF : 0);
+  int physical_v6_len = v6_len;
 
   /*
    * The packet is supposedly our own packet after translation - so the rules
@@ -1102,7 +1113,10 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
 
   if (proto == NEXTHDR_FRAGMENT) {
     struct frag_hdr *fh = (struct frag_hdr*)(ip6h + 1);
-    if(fh->frag_off == 0) {
+    if (v6_len < (int)(sizeof(*ip6h) + sizeof(*fh))) {
+      return 0;
+    }
+    if (quoted_ipv6_fragment_is_atomic(fh)) {
       /* Atomic fragment */
       proto = fh->nexthdr;
       ipid = ipv6_frag_id_to_ipv4(fh->identification);
@@ -1172,7 +1186,15 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
     *ul_sum = rechecksum16(iph, 10, *ul_sum);
   }
 
-  memmove(((char *)pv6) + IPV4HDRSIZE, get_next_header_ptr6(ip6h, v6_len), v6_len - sizeof(struct ipv6hdr));
+  {
+    void *next_hdr = get_next_header_ptr6(ip6h, physical_v6_len);
+
+    if (!next_hdr) {
+      return 0;
+    }
+    memmove(((char *)pv6) + IPV4HDRSIZE, next_hdr,
+            v6_len - sizeof(struct ipv6hdr));
+  }
   memcpy(pv6, iph, IPV4HDRSIZE);
   *ptailTruncSize += IPV6V4HDRDELTA;
   return (v6_len - IPV6V4HDRDELTA);
@@ -1898,7 +1920,7 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
               goto done;
             }
             quoted_fh = (struct frag_hdr *)(quoted_ip6h + 1);
-            if (quoted_fh->frag_off == 0) {
+            if (quoted_ipv6_fragment_is_atomic(quoted_fh)) {
               quoted_proto = quoted_fh->nexthdr;
               transport_offset += sizeof(*quoted_fh);
             }
