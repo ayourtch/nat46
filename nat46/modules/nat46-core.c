@@ -494,23 +494,30 @@ static int xlate_nat64_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, 
   char *ipv4 = pipv4;
   char *ipv6 = pipv6;
   int cmp = -1;
+  int suffix_start = 16;
+  int i;
   int v6_pref_len = rule->v6_pref_len;
 
   switch(v6_pref_len) {
     case 32:
       cmp = memcmp(ipv6, &rule->v6_pref, 4);
+      suffix_start = 9;
       break;
     case 40:
       cmp = memcmp(ipv6, &rule->v6_pref, 5);
+      suffix_start = 10;
       break;
     case 48:
       cmp = memcmp(ipv6, &rule->v6_pref, 6);
+      suffix_start = 11;
       break;
     case 56:
       cmp = memcmp(ipv6, &rule->v6_pref, 7);
+      suffix_start = 12;
       break;
     case 64:
       cmp = memcmp(ipv6, &rule->v6_pref, 8);
+      suffix_start = 13;
       break;
     case 96:
       cmp = memcmp(ipv6, &rule->v6_pref, 12);
@@ -519,6 +526,16 @@ static int xlate_nat64_to_v4(nat46_instance_t *nat46, nat46_xlate_rule_t *rule, 
   if (cmp) {
     /* Not in NAT64 prefix */
     return 0;
+  }
+  if (ipv6[8]) {
+    /* RFC6052 reserves bits 64 through 71 as the null u octet. */
+    return 0;
+  }
+  for (i = suffix_start; i < 16; i++) {
+    if (ipv6[i]) {
+      /* Reject noncanonical aliases with nonzero reserved suffix bits. */
+      return 0;
+    }
   }
   switch(v6_pref_len) {
     case 32:
