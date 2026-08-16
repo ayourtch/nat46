@@ -2525,6 +2525,10 @@ static int xlate_payload4_to6(nat46_instance_t *nat46, struct sk_buff *skb,
   new_header_len = sizeof(inner_ip6) +
                    (add_frag_header ? sizeof(inner_fh) : 0);
   delta = new_header_len - inner_ihl;
+  if (delta > 0 && outer_payload_len > 0xffff - delta) {
+    nat46debug(0, "[nat46] Translated ICMPv6 payload exceeds 65535 bytes");
+    return 0;
+  }
   if (delta > 0 && pskb_expand_head(skb, 0, delta, GFP_ATOMIC)) {
     nat46debug(0, "[nat46] Could not expand skb for inner IPv6 header");
     return 0;
