@@ -765,6 +765,23 @@ static __sum16 csum16_upd(__sum16 csum, u16 old, u16 new) {
   return htons((u16)(~s));
 }
 
+static __sum16 csum_v4_to_v6_addr(__sum16 csum,
+                                  const struct iphdr *iph,
+                                  const struct ipv6hdr *ip6h) {
+  const u16 *pdata;
+  int i;
+
+  pdata = (const u16 *)&iph->saddr;
+  for (i = 0; i < 4; i++) {
+    csum = csum16_upd(csum, *pdata++, 0);
+  }
+  pdata = (const u16 *)&ip6h->saddr;
+  for (i = 0; i < 16; i++) {
+    csum = csum16_upd(csum, 0, *pdata++);
+  }
+  return csum;
+}
+
 /* Add the TCP/UDP pseudoheader, basing on the existing checksum */
 
 static __sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, u32 len,
@@ -1836,7 +1853,8 @@ done:
 
 
 
-static void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int do_atomic_frag)
+static void ip6_update_csum(struct sk_buff * skb, struct iphdr * ip4hdr,
+                            struct ipv6hdr * ip6hdr, int do_atomic_frag)
 {
   u32 sum1=0;
   u16 sum2=0;
@@ -1848,6 +1866,10 @@ static void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int d
       unsigned tcplen = 0;
 
       oldsum = th->check;
+      if (do_atomic_frag) {
+        th->check = csum_v4_to_v6_addr(oldsum, ip4hdr, ip6hdr);
+        break;
+      }
       tcplen = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* TCP header + payload */
       th->check = 0;
       sum1 = csum_partial((char*)th, tcplen, 0); /* calculate checksum for TCP hdr+payload */
@@ -1865,6 +1887,10 @@ static void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int d
       }
 
       oldsum = udp->check;
+      if (do_atomic_frag) {
+        udp->check = csum_v4_to_v6_addr(oldsum, ip4hdr, ip6hdr);
+        break;
+      }
       udp->check = 0;
 
       sum1 = csum_partial((char*)udp, udplen, 0); /* calculate checksum for UDP hdr+payload */
@@ -2125,7 +2151,7 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
     fh->identification = htonl(ntohs(hdr4->id));
   }
   if (check_for_l4) {
-    ip6_update_csum(new_skb, hdr6, add_frag_header);
+    ip6_update_csum(new_skb, hdr4, hdr6, add_frag_header);
   }
 
   hdr6->nexthdr = add_frag_header ? NEXTHDR_FRAGMENT : hdr4->protocol;
