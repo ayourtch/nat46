@@ -2506,6 +2506,54 @@ static int pairs_xlate_v4_to_v6_inner(nat46_instance_t *nat46,
   return xlate_src >= 0 && xlate_dst >= 0;
 }
 
+static bool quoted_ipv4_has_active_source_route(const struct iphdr *iph,
+                                                 int quoted_len) {
+  const u8 *option = (const u8 *)(iph + 1);
+  int header_len = iph->ihl << 2;
+  int remaining;
+
+  if (header_len < (int)sizeof(*iph) || header_len > quoted_len) {
+    return false;
+  }
+  remaining = header_len - (int)sizeof(*iph);
+
+  while (remaining > 0) {
+    u8 option_len;
+    u8 option_type = option[0];
+
+    if (option_type == IPOPT_END) {
+      break;
+    }
+    if (option_type == IPOPT_NOOP) {
+      option++;
+      remaining--;
+      continue;
+    }
+    if (remaining <= IPOPT_OLEN) {
+      break;
+    }
+    option_len = option[IPOPT_OLEN];
+    if (option_len < 2 || option_len > remaining) {
+      break;
+    }
+    if (option_type == IPOPT_LSRR || option_type == IPOPT_SSRR) {
+      int route_data_len = option_len - (IPOPT_MINOFF - 1);
+
+      /* The one-based pointer is active until it advances past the option. */
+      if (route_data_len >= (int)sizeof(__be32) &&
+          !(route_data_len % sizeof(__be32)) &&
+          option[IPOPT_OFFSET] >= IPOPT_MINOFF &&
+          option[IPOPT_OFFSET] <= option_len) {
+        return true;
+      }
+    }
+    option += option_len;
+    remaining -= option_len;
+  }
+
+  return false;
+}
+
 /* Translate the IPv4 packet quoted by an ICMPv4 error. The embedded packet
  * uses the reverse direction from the outer error and may be only partially
  * present, so advertised lengths and physically available bytes stay
@@ -2582,6 +2630,10 @@ static int xlate_payload4_to6(nat46_instance_t *nat46, struct sk_buff *skb,
       ntohs(inner_iph->tot_len) < inner_ihl ||
       inner_offset + inner_ihl > old_skb_len) {
     nat46debug(0, "[nat46] Invalid inner IPv4 packet in ICMPv4 error");
+    return 0;
+  }
+  if (quoted_ipv4_has_active_source_route(inner_iph, inner_quoted_len)) {
+    nat46debug(0, "[nat46] Active source route in quoted IPv4 packet");
     return 0;
   }
   if (extension_state && ntohs(inner_iph->tot_len) < inner_quoted_len &&
