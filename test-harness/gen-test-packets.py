@@ -71,6 +71,10 @@ ICMP_QUOTE_LIMIT_REJECTED_FIXTURE = Path(
     "test-harness/tests/icmp-quote-output-limit/inject-rejected-tap0.jsonl")
 ICMP_QUOTE_LIMIT_EXPECTED = Path(
     "test-harness/test-data/expected/icmp-quote-output-limit.jsonl")
+QUOTED_FRAGMENTED_ICMP_FIXTURE = Path(
+    "test-harness/tests/icmp-quote-fragmented-icmp/inject-tap0.jsonl")
+QUOTED_FRAGMENTED_ICMP_EXPECTED = Path(
+    "test-harness/test-data/expected/icmp-quote-fragmented-icmp.jsonl")
 
 
 def checksum(data):
@@ -119,6 +123,87 @@ def ipv4_transport_checksum(src, dst, protocol, segment):
     return checksum(pseudoheader + segment)
 
 
+def generate_quoted_fragmented_icmp():
+    def echo_request(identifier, sequence, marker):
+        message = bytearray(
+            struct.pack("!BBHHH", 8, 0, 0, identifier, sequence) + marker)
+        struct.pack_into("!H", message, 2, checksum(message))
+        assert checksum(message) == 0
+        return bytes(message)
+
+    first_message = echo_request(0x1911, 0x0101, b"FIRST19!")
+    first_quote = (ipv4_header(
+        "8.8.8.8", "192.168.1.100", 1, len(first_message),
+        identification=0x19f1, more_fragments=True)
+                   + first_message[:4])
+    nonfirst_quote = (ipv4_header(
+        "8.8.8.8", "192.168.1.100", 1, 8,
+        identification=0x19f2, fragment_offset=1)
+                      + b"NFRAG19!")
+    control_message = echo_request(0x1919, 0x0102, b"CTRL19!!")
+    control_quote = (ipv4_header(
+        "8.8.8.8", "192.168.1.100", 1, len(control_message),
+        identification=0x19f3)
+                     + control_message)
+
+    cases = (
+        (first_quote, 0x29f1, 3, 1000000),
+        (nonfirst_quote, 0x29f2, 3, 1100000),
+        (control_quote, 0x29f3, 1, 1200000),
+    )
+    packets = []
+    checks = []
+    for quote, outer_identification, outer_code, timestamp_us in cases:
+        packet = icmpv4_error_packet(
+            quote, timestamp_us, outer_identification, code=outer_code)
+        message = bytes(packet["layers"][2]["data"])
+        assert checksum(message) == 0
+        packets.append(packet)
+        checks.append({
+            "count": 1,
+            "packet": {
+                "direction": "tx",
+                "layers": [
+                    {
+                        "layertype": "Ip",
+                        "id": outer_identification,
+                        "proto": 1,
+                        "src": "192.168.1.100",
+                        "dst": "8.8.8.8",
+                    },
+                    {"layertype": "Icmp", "typ": 3, "code": outer_code},
+                    {"layertype": "raw", "data": list(message[4:])},
+                ],
+            },
+        })
+
+    checks.append({
+        "count": 1,
+        "packet": {
+            "direction": "rx",
+            "layers": [
+                {
+                    "layertype": "Ipv6",
+                    "src": LOCAL_V6,
+                    "dst": REMOTE_V6,
+                    "next_header": 58,
+                },
+                {"layertype": "Icmpv6", "code": 0},
+            ],
+        },
+    })
+
+    QUOTED_FRAGMENTED_ICMP_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in packets))
+    QUOTED_FRAGMENTED_ICMP_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": 1,
+            "checks": checks,
+        }, separators=(",", ":")) + "\n")
+
+
 def transport_segment(src, dst, protocol, sport, dport, payload):
     if protocol == 6:
         segment = bytearray(struct.pack(
@@ -157,9 +242,9 @@ def ipv4_header(src, dst, protocol, payload_len, identification=0,
 
 
 def icmpv4_error_packet(quoted_packet, timestamp_us, identification,
-                        field=0, trailing_data=b""):
+                        code=3, field=0, trailing_data=b""):
     message = bytearray(
-        struct.pack("!BBHI", 3, 3, 0, field)
+        struct.pack("!BBHI", 3, code, 0, field)
         + quoted_packet + trailing_data)
     struct.pack_into("!H", message, 2, checksum(bytes(message)))
     packet = ipv4_fragment_packet(
@@ -859,6 +944,7 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 def main():
     generate_icmp_embedded_headers()
     generate_icmp_quote_output_limit()
+    generate_quoted_fragmented_icmp()
 
     rfc6052_prefixes = (
         (32, "2001:db8::/32"),
