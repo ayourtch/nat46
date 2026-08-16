@@ -61,6 +61,10 @@ RFC6052_CANONICAL_FIXTURE = Path(
     "test-harness/tests/rfc6052-canonical/inject-tap0.jsonl")
 RFC6052_CANONICAL_EXPECTED = Path(
     "test-harness/test-data/expected/rfc6052-canonical.jsonl")
+ICMP_EMBEDDED_FIXTURE = Path(
+    "test-harness/tests/icmp-embedded-headers/inject-tap0.jsonl")
+ICMP_EMBEDDED_EXPECTED = Path(
+    "test-harness/test-data/expected/icmp-embedded-headers.jsonl")
 
 
 def checksum(data):
@@ -107,6 +111,191 @@ def ipv4_transport_checksum(src, dst, protocol, segment):
                     + ipaddress.IPv4Address(dst).packed
                     + struct.pack("!BBH", 0, protocol, len(segment)))
     return checksum(pseudoheader + segment)
+
+
+def transport_segment(src, dst, protocol, sport, dport, payload):
+    if protocol == 6:
+        segment = bytearray(struct.pack(
+            "!HHIIBBHHH", sport, dport, 0x10203040, 0, 0x50, 2,
+            16384, 0, 0) + payload)
+        checksum_offset = 16
+    elif protocol == 17:
+        segment = bytearray(struct.pack(
+            "!HHHH", sport, dport, 8 + len(payload), 0) + payload)
+        checksum_offset = 6
+    else:
+        raise ValueError(f"unsupported transport protocol {protocol}")
+
+    checksum_fn = (ipv4_transport_checksum
+                   if ipaddress.ip_address(src).version == 4
+                   else ipv6_transport_checksum)
+    struct.pack_into(
+        "!H", segment, checksum_offset,
+        checksum_fn(src, dst, protocol, segment))
+    assert checksum_fn(src, dst, protocol, segment) == 0
+    return bytes(segment)
+
+
+def ipv4_header(src, dst, protocol, payload_len, identification=0,
+                ttl=47):
+    header = bytearray(struct.pack(
+        "!BBHHHBBH", 0x45, 0, 20 + payload_len, identification,
+        0, ttl, protocol, 0))
+    header.extend(ipaddress.IPv4Address(src).packed)
+    header.extend(ipaddress.IPv4Address(dst).packed)
+    struct.pack_into("!H", header, 10, checksum(header))
+    assert checksum(header) == 0
+    return bytes(header)
+
+
+def icmpv4_error_packet(quoted_packet, timestamp_us, identification):
+    message = bytearray(struct.pack("!BBHI", 3, 3, 0, 0) + quoted_packet)
+    struct.pack_into("!H", message, 2, checksum(message))
+    packet = ipv4_fragment_packet(
+        "192.168.1.100", "8.8.8.8", 1, identification, 0, False,
+        message)
+    packet["timestamp_us"] = timestamp_us
+    return packet
+
+
+def generate_icmp_embedded_headers():
+    unfragmented_flags = {
+        "reserved": False,
+        "dont_fragment": False,
+        "more_fragments": False,
+        "fragment_offset": 0,
+    }
+    cases = (
+        (6, 443, 40000, b"quoted-v4-tcp!"),
+        (17, 53, 53000, b"quoted-v4-udp!"),
+    )
+    packets = []
+    checks = []
+
+    # The ICMPv4 error travels local-to-remote and quotes the earlier
+    # remote-to-local packet, so its embedded lookup reverses the outer rules.
+    for index, (protocol, sport, dport, payload) in enumerate(cases):
+        source_segment = transport_segment(
+            "8.8.8.8", "192.168.1.100", protocol, sport, dport, payload)
+        quoted_ipv4 = (ipv4_header(
+            "8.8.8.8", "192.168.1.100", protocol, len(source_segment),
+            identification=0x4100 + index)
+                       + source_segment)
+        packets.append(icmpv4_error_packet(
+            quoted_ipv4, 1000000 + index * 100000, 0x5100 + index))
+
+        translated_segment = transport_segment(
+            REMOTE_V6, LOCAL_V6, protocol, sport, dport, payload)
+        translated_quote = (ipv6_header(
+            len(translated_segment), protocol, REMOTE_V6, LOCAL_V6,
+            hop_limit=47)
+                            + translated_segment)
+        translated_icmp = bytearray(
+            struct.pack("!BBHI", 1, 4, 0, 0) + translated_quote)
+        translated_checksum = icmpv6_checksum(
+            LOCAL_V6, REMOTE_V6, translated_icmp)
+        struct.pack_into("!H", translated_icmp, 2, translated_checksum)
+        assert icmpv6_checksum(LOCAL_V6, REMOTE_V6, translated_icmp) == 0
+
+        checks.append({
+            "count": 1,
+            "packet": {
+                "direction": "rx",
+                "valid_checksums": True,
+                "layers": [
+                    {
+                        "layertype": "Ipv6",
+                        "version_class": 0x60000000,
+                        "payload_length": len(translated_icmp),
+                        "next_header": 58,
+                        "hop_limit": 254,
+                        "src": LOCAL_V6,
+                        "dst": REMOTE_V6,
+                    },
+                    {
+                        "layertype": "Icmpv6",
+                        "type_": 1,
+                        "code": 4,
+                        "checksum": translated_checksum,
+                    },
+                    {
+                        "layertype": "icmpv6DestUnreach",
+                        "unused": 0,
+                        "invoking_packet": list(translated_quote),
+                    },
+                ],
+            },
+        })
+
+    # The ICMPv6 error travels remote-to-local and quotes the earlier
+    # local-to-remote packet, again requiring the reverse outer-rule direction.
+    for index, (protocol, sport, dport, payload) in enumerate((
+            (6, 40001, 443, b"quoted-v6-tcp!"),
+            (17, 53001, 53, b"quoted-v6-udp!"))):
+        source_segment = transport_segment(
+            LOCAL_V6, REMOTE_V6, protocol, sport, dport, payload)
+        quoted_ipv6 = (ipv6_header(
+            len(source_segment), protocol, LOCAL_V6, REMOTE_V6,
+            hop_limit=47)
+                       + source_segment)
+        packets.append(icmpv6_error_packet(
+            quoted_ipv6, timestamp_us=1200000 + index * 100000,
+            icmp_type=1, icmp_code=4))
+
+        translated_segment = transport_segment(
+            "192.168.1.100", "8.8.8.8", protocol, sport, dport, payload)
+        translated_quote = (ipv4_header(
+            "192.168.1.100", "8.8.8.8", protocol,
+            len(translated_segment), ttl=47)
+                            + translated_segment)
+        translated_icmp = bytearray(
+            struct.pack("!BBHI", 3, 3, 0, 0) + translated_quote)
+        translated_checksum = checksum(translated_icmp)
+        struct.pack_into("!H", translated_icmp, 2, translated_checksum)
+        assert checksum(translated_icmp) == 0
+
+        checks.append({
+            "count": 1,
+            "packet": {
+                "direction": "rx",
+                "valid_checksums": True,
+                "layers": [
+                    {
+                        "layertype": "Ip",
+                        "version": 4,
+                        "ihl": 5,
+                        "tos": 0,
+                        "len": 20 + len(translated_icmp),
+                        "flags": unfragmented_flags,
+                        "ttl": 63,
+                        "proto": 1,
+                        "src": "8.8.8.8",
+                        "dst": "192.168.1.100",
+                        "options": [],
+                    },
+                    {
+                        "layertype": "Icmp",
+                        "typ": 3,
+                        "code": 3,
+                        "chksum": translated_checksum,
+                    },
+                    {
+                        "layertype": "raw",
+                        "data": list(b"\0\0\0\0" + translated_quote),
+                    },
+                ],
+            },
+        })
+
+    ICMP_EMBEDDED_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in packets))
+    ICMP_EMBEDDED_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": 4,
+            "checks": checks,
+        }, separators=(",", ":")) + "\n")
 
 
 def udp_segment_for_zero_output_checksum(output_src, output_dst,
@@ -375,6 +564,8 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 
 
 def main():
+    generate_icmp_embedded_headers()
+
     rfc6052_prefixes = (
         (32, "2001:db8::/32"),
         (40, "2001:db9:100::/40"),
