@@ -1,0 +1,16 @@
+# Extract a nine-bit PSID ending at the transport identifier boundary.  Its
+# seven-bit source offset and byte-aligned IPv6 destination force the helper's
+# unaligned path while the following IID bits must remain untouched.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+echo config nat46dev debug 255 > /proc/net/nat46/control
+
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:8:9:a000::/80 local.style MAP local.ea-len 9 local.psid-offset 7 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/u8-map-unaligned-psid.jsonl
+inject /mnt/host/test-harness/tests/u8-map-unaligned-psid/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/u8-map-unaligned-psid-inject.log
+capture stop all
+
+echo del nat46dev > /proc/net/nat46/control
