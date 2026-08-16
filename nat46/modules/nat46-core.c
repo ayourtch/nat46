@@ -2124,7 +2124,9 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
     fh->nexthdr = hdr4->protocol;
     fh->identification = htonl(ntohs(hdr4->id));
   }
-  ip6_update_csum(new_skb, hdr6, add_frag_header);
+  if (check_for_l4) {
+    ip6_update_csum(new_skb, hdr6, add_frag_header);
+  }
 
   hdr6->nexthdr = add_frag_header ? NEXTHDR_FRAGMENT : hdr4->protocol;
 
