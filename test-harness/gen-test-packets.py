@@ -49,6 +49,10 @@ V4_DF_FRAGMENTATION_FIXTURE = Path(
     "test-harness/tests/v4-df-fragmentation/inject-tap0.jsonl")
 V6_DF_THRESHOLD_FIXTURE = Path(
     "test-harness/tests/v6-df-threshold/inject-tap0.jsonl")
+UDP_PADDING_FIXTURE = Path(
+    "test-harness/tests/v4-udp-padding-checksum/inject-tap0.jsonl")
+UDP_PADDING_EXPECTED = Path(
+    "test-harness/test-data/expected/v4-udp-padding-checksum.jsonl")
 
 
 def checksum(data):
@@ -286,6 +290,104 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 
 
 def main():
+    udp_padding_payload = b"UDP-DATAGRAM-PAYLOAD-OK!"
+    udp_trailing_padding = (bytes.fromhex("de ad be ef ca fe f0 0d")
+                            + b"NOT-UDP-PAYLOAD!")
+    udp_declared_length = 8 + len(udp_padding_payload)
+    udp_segment = bytearray(struct.pack(
+        "!HHHH", 12345, 54321, udp_declared_length, 0)
+        + udp_padding_payload)
+    struct.pack_into(
+        "!H", udp_segment, 6,
+        ipv4_transport_checksum(
+            "192.168.1.100", "8.8.8.8", 17, udp_segment))
+    udp_padding_packet = ipv4_fragment_packet(
+        "192.168.1.100", "8.8.8.8", 17, 0x1357, 0, False,
+        udp_segment + udp_trailing_padding)
+    UDP_PADDING_FIXTURE.write_text(
+        json.dumps(udp_padding_packet, separators=(",", ":")) + "\n")
+
+    udp_padding_data = list(udp_padding_payload + udp_trailing_padding)
+    udp_padding_flags = {
+        "reserved": False,
+        "dont_fragment": False,
+        "more_fragments": False,
+        "fragment_offset": 0,
+    }
+    udp_padding_spec = {
+        "expected_rx_count": 1,
+        "checks": [
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx",
+                    "valid_checksums": True,
+                    "udp_checksum_excludes_trailing_padding": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip",
+                            "version": 4,
+                            "ihl": 5,
+                            "tos": 0,
+                            "len": 76,
+                            "id": 0x1357,
+                            "flags": udp_padding_flags,
+                            "ttl": 254,
+                            "proto": 17,
+                            "src": "192.168.1.100",
+                            "dst": "8.8.8.8",
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Udp",
+                            "sport": 12345,
+                            "dport": 54321,
+                            "len": udp_declared_length,
+                            "nonzero_fields": ["chksum"],
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": udp_padding_data,
+                        },
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": True,
+                    "udp_checksum_excludes_trailing_padding": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": 56,
+                            "next_header": 17,
+                            "hop_limit": 254,
+                            "src": LOCAL_V6,
+                            "dst": REMOTE_V6,
+                        },
+                        {
+                            "layertype": "Udp",
+                            "sport": 12345,
+                            "dport": 54321,
+                            "len": udp_declared_length,
+                            "nonzero_fields": ["chksum"],
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": udp_padding_data,
+                        },
+                    ],
+                },
+            },
+        ],
+    }
+    UDP_PADDING_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps(udp_padding_spec, separators=(",", ":")) + "\n")
+
     map_packet = ipv4_tcp_packet(
         "192.168.1.100", "8.8.8.8", 12345, 81, bytes([42]) * 20)
     MAP_ADDRESS_WIDTH_FIXTURE.write_text(

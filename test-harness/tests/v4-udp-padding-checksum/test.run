@@ -1,0 +1,17 @@
+# A 76-byte IPv4 packet carries a 32-byte UDP datagram followed by 24 bytes of
+# recognizable padding.  Translation must retain the 56-byte IP payload, keep
+# the UDP length at 32, preserve the 24-byte declared payload and the distinct
+# DE AD BE EF CA FE F0 0D / "NOT-UDP-PAYLOAD!" padding in place, and checksum
+# only the UDP-declared datagram while growing the network packet by 20 bytes.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+echo config nat46dev debug 255 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/v4-udp-padding-checksum.jsonl
+inject /mnt/host/test-harness/tests/v4-udp-padding-checksum/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/v4-udp-padding-checksum-inject.log
+capture stop all
+
+echo del nat46dev > /proc/net/nat46/control

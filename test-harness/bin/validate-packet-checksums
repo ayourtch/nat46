@@ -217,7 +217,8 @@ def reassemble_ipv6_fragments(packet: dict, packets):
     return reassembled_network, protocol, b"".join(segment_parts)
 
 
-def validate(packet: dict, packets) -> None:
+def validate(packet: dict, packets,
+             require_udp_padding_excluded: bool = False) -> None:
     network, packet_bytes, _network_payload = serialized_network_packet(packet)
 
     if network["layertype"] == "Ipv6" and network["next_header"] == 44:
@@ -245,6 +246,7 @@ def validate(packet: dict, packets) -> None:
     field_offsets = {"Tcp": 16, "Udp": 6, "Icmp": 2, "Icmpv6": 2}
     if len(segment) < field_offsets[transport] + 2:
         raise ValueError(f"truncated {transport} checksum field")
+    full_segment = segment
     checksum_length = len(segment)
     if transport == "Udp":
         checksum_length = struct.unpack_from("!H", segment, 4)[0]
@@ -270,6 +272,42 @@ def validate(packet: dict, packets) -> None:
         raise ValueError(invalid_checksum_message(
             transport, checked, checksum_offset, checksum_length
         ))
+    if require_udp_padding_excluded:
+        if transport != "Udp":
+            raise ValueError(
+                "trailing-padding checksum assertion requires UDP")
+        if len(full_segment) == checksum_length:
+            raise ValueError(
+                "trailing-padding checksum assertion requires bytes after UDP")
+
+        if network["layertype"] == "Ipv6":
+            addresses = (ipaddress.IPv6Address(network["src"]).packed
+                         + ipaddress.IPv6Address(network["dst"]).packed)
+            declared_pseudoheader = (
+                addresses
+                + struct.pack("!I3xB", checksum_length,
+                              network["next_header"]))
+            padded_pseudoheader = (
+                addresses
+                + struct.pack("!I3xB", len(full_segment),
+                              network["next_header"]))
+        else:
+            addresses = (ipaddress.IPv4Address(network["src"]).packed
+                         + ipaddress.IPv4Address(network["dst"]).packed)
+            declared_pseudoheader = (
+                addresses
+                + struct.pack("!BBH", 0, network["proto"], checksum_length))
+            padded_pseudoheader = (
+                addresses
+                + struct.pack("!BBH", 0, network["proto"],
+                              len(full_segment)))
+
+        if checksum(declared_pseudoheader + full_segment) == 0:
+            raise ValueError(
+                "UDP checksum also validates with trailing padding included")
+        if checksum(padded_pseudoheader + full_segment) == 0:
+            raise ValueError(
+                "UDP checksum also validates with padded pseudo-header length")
 
 
 def main() -> int:
@@ -286,7 +324,13 @@ def main() -> int:
             for packet_index, packet in enumerate(packets, 1):
                 if packet_matches(expected, packet):
                     try:
-                        validate(packet, packets)
+                        validate(
+                            packet,
+                            packets,
+                            expected.get(
+                                "udp_checksum_excludes_trailing_padding",
+                                False),
+                        )
                     except (KeyError, StopIteration, ValueError) as error:
                         raise ValueError(
                             f"check {check_index}, captured packet "
