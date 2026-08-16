@@ -75,6 +75,10 @@ QUOTED_FRAGMENTED_ICMP_FIXTURE = Path(
     "test-harness/tests/icmp-quote-fragmented-icmp/inject-tap0.jsonl")
 QUOTED_FRAGMENTED_ICMP_EXPECTED = Path(
     "test-harness/test-data/expected/icmp-quote-fragmented-icmp.jsonl")
+QUOTED_SOURCE_ROUTE_FIXTURE = Path(
+    "test-harness/tests/icmp-quote-source-route/inject-tap0.jsonl")
+QUOTED_SOURCE_ROUTE_EXPECTED = Path(
+    "test-harness/test-data/expected/icmp-quote-source-route.jsonl")
 
 
 def checksum(data):
@@ -204,6 +208,121 @@ def generate_quoted_fragmented_icmp():
         }, separators=(",", ":")) + "\n")
 
 
+def generate_quoted_source_routes():
+    cases = (
+        (0x83, 4, "203.0.113.11", 0x2a01, 0x3a01, 3, 41001, 42001,
+         b"LSR-ACT!", 1000000, True),
+        (0x89, 4, "198.51.100.22", 0x2a02, 0x3a02, 3, 41002, 42002,
+         b"SSR-ACT!", 1100000, True),
+        (0x83, 8, "203.0.113.33", 0x2a03, 0x3a03, 1, 41003, 42003,
+         b"LSR-DONE", 1200000, False),
+        (0x89, 8, "198.51.100.44", 0x2a04, 0x3a04, 0, 41004, 42004,
+         b"SSR-DONE", 1300000, False),
+    )
+    packets = []
+    checks = []
+
+    for (option_type, pointer, route_address, inner_identification,
+         outer_identification, outer_code, sport, dport, marker,
+         timestamp_us, active) in cases:
+        options = (struct.pack(
+            "!BBB4s", option_type, 7, pointer,
+            ipaddress.IPv4Address(route_address).packed)
+                   + b"\0")
+        assert len(options) == 8
+        assert options[1] == 7
+        assert options[2] == pointer
+
+        source_segment = transport_segment(
+            "8.8.8.8", "192.168.1.100", 17, sport, dport, marker)
+        quoted_ipv4 = (ipv4_header(
+            "8.8.8.8", "192.168.1.100", 17, len(source_segment),
+            identification=inner_identification, options=options)
+                       + source_segment)
+        inner_ihl = (quoted_ipv4[0] & 0x0f) * 4
+        assert inner_ihl == 28
+        assert struct.unpack_from("!H", quoted_ipv4, 2)[0] == len(quoted_ipv4)
+        assert checksum(quoted_ipv4[:inner_ihl]) == 0
+
+        packet = icmpv4_error_packet(
+            quoted_ipv4, timestamp_us, outer_identification, code=outer_code)
+        source_message = bytes(packet["layers"][2]["data"])
+        assert checksum(source_message) == 0
+        packets.append(packet)
+        checks.append({
+            "count": 1,
+            "packet": {
+                "direction": "tx",
+                "valid_checksums": True,
+                "layers": [
+                    {
+                        "layertype": "Ip",
+                        "id": outer_identification,
+                        "proto": 1,
+                        "src": "192.168.1.100",
+                        "dst": "8.8.8.8",
+                    },
+                    {"layertype": "Icmp", "typ": 3, "code": outer_code},
+                    {"layertype": "raw", "data": list(source_message[4:])},
+                ],
+            },
+        })
+
+        translated_segment = transport_segment(
+            REMOTE_V6, LOCAL_V6, 17, sport, dport, marker)
+        translated_quote = (ipv6_header(
+            len(translated_segment), 17, REMOTE_V6, LOCAL_V6,
+            hop_limit=47)
+                            + translated_segment)
+        translated_code = 4 if outer_code == 3 else 0
+        translated_icmp = bytearray(
+            struct.pack("!BBHI", 1, translated_code, 0, 0)
+            + translated_quote)
+        translated_checksum = icmpv6_checksum(
+            LOCAL_V6, REMOTE_V6, translated_icmp)
+        struct.pack_into("!H", translated_icmp, 2, translated_checksum)
+        assert icmpv6_checksum(LOCAL_V6, REMOTE_V6, translated_icmp) == 0
+        checks.append({
+            "count": 0 if active else 1,
+            "packet": {
+                "direction": "rx",
+                "valid_checksums": True,
+                "layers": [
+                    {
+                        "layertype": "Ipv6",
+                        "version_class": 0x60000000,
+                        "payload_length": len(translated_icmp),
+                        "next_header": 58,
+                        "hop_limit": 254,
+                        "src": LOCAL_V6,
+                        "dst": REMOTE_V6,
+                    },
+                    {
+                        "layertype": "Icmpv6",
+                        "type_": 1,
+                        "code": translated_code,
+                        "checksum": translated_checksum,
+                    },
+                    {
+                        "layertype": "icmpv6DestUnreach",
+                        "unused": 0,
+                        "invoking_packet": list(translated_quote),
+                    },
+                ],
+            },
+        })
+
+    QUOTED_SOURCE_ROUTE_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in packets))
+    QUOTED_SOURCE_ROUTE_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": 2,
+            "checks": checks,
+        }, separators=(",", ":")) + "\n")
+
+
 def transport_segment(src, dst, protocol, sport, dport, payload):
     if protocol == 6:
         segment = bytearray(struct.pack(
@@ -228,14 +347,20 @@ def transport_segment(src, dst, protocol, sport, dport, payload):
 
 
 def ipv4_header(src, dst, protocol, payload_len, identification=0,
-                ttl=47, fragment_offset=0, more_fragments=False):
+                ttl=47, fragment_offset=0, more_fragments=False,
+                options=b""):
+    assert len(options) % 4 == 0
+    assert len(options) <= 40
+    header_len = 20 + len(options)
     fragment_field = (fragment_offset
                       | (0x2000 if more_fragments else 0))
     header = bytearray(struct.pack(
-        "!BBHHHBBH", 0x45, 0, 20 + payload_len, identification,
+        "!BBHHHBBH", 0x40 | (header_len // 4), 0,
+        header_len + payload_len, identification,
         fragment_field, ttl, protocol, 0))
     header.extend(ipaddress.IPv4Address(src).packed)
     header.extend(ipaddress.IPv4Address(dst).packed)
+    header.extend(options)
     struct.pack_into("!H", header, 10, checksum(header))
     assert checksum(header) == 0
     return bytes(header)
@@ -770,6 +895,7 @@ def ipv4_fragment_packet(src, dst, protocol, identification,
     ipv4.extend(ipaddress.IPv4Address(src).packed)
     ipv4.extend(ipaddress.IPv4Address(dst).packed)
     struct.pack_into("!H", ipv4, 10, checksum(ipv4))
+    assert checksum(ipv4) == 0
 
     return {
         "timestamp_us": 1000000,
@@ -945,6 +1071,7 @@ def main():
     generate_icmp_embedded_headers()
     generate_icmp_quote_output_limit()
     generate_quoted_fragmented_icmp()
+    generate_quoted_source_routes()
 
     rfc6052_prefixes = (
         (32, "2001:db8::/32"),

@@ -1,0 +1,15 @@
+# Active LSRR and SSRR options have pointer 4, selecting their first route
+# address, so their quoted packets must not be translated. Matching options
+# with pointer 8 are past their seven-byte option length and remain controls.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+echo config nat46dev debug 255 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/icmp-quote-source-route.jsonl
+inject /mnt/host/test-harness/tests/icmp-quote-source-route/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/icmp-quote-source-route-inject.log
+capture stop all
+
+echo del nat46dev > /proc/net/nat46/control

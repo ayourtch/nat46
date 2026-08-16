@@ -24,6 +24,7 @@ icmp-mtu-reserved-bits
 icmp-embedded-headers
 icmp-quote-output-limit
 icmp-quote-fragmented-icmp
+icmp-quote-source-route
 v4-udp-padding-checksum
 udp-zero-checksum
 rfc6052-canonical
