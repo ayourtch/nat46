@@ -21,6 +21,8 @@ ATOMIC_FRAGMENT_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-atomic-fragment/inject-tap0.jsonl")
 MAP_ADDRESS_WIDTH_FIXTURE = Path(
     "test-harness/tests/map-address-width/inject-tap0.jsonl")
+UNMAPPABLE_QUOTE_FIXTURE = Path(
+    "test-harness/tests/ipv6-quote-unmappable/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -204,6 +206,10 @@ def main():
     packet = icmpv6_error_packet(quoted_packet, trailing_data=trailing_data)
     MINIMUM_PAYLOAD_FIXTURE.write_text(
         json.dumps(packet, separators=(",", ":")) + "\n")
+
+    quoted_packet = ipv6_header(
+        0, 59, "2001:db8:9999::1", "2001:db8:8888::1")
+    write_icmpv6_error_fixture(UNMAPPABLE_QUOTE_FIXTURE, quoted_packet)
 
 
 if __name__ == "__main__":

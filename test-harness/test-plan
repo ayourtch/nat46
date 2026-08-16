@@ -7,3 +7,4 @@ ipv6-quote-short-transport
 ipv6-quote-minimum-payload
 map-address-width
 u8-map-unaligned-psid
+ipv6-quote-unmappable
