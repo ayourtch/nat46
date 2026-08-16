@@ -1296,13 +1296,22 @@ static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr
    *            b.  If the packet is greater than 1280 bytes, the translator
    *                SHOULD set the IPv4 DF bit to 1.
    */
-  u16 *pmtu = ((u16 *)icmp6h) + 3; /* IPv4-compatible MTU value is 16 bit */
-  u16 old_csum = icmp6h->icmp6_cksum;
+  u32 advertised_mtu = ntohl(icmp6h->icmp6_mtu);
+  u32 adjusted_mtu = advertised_mtu > IPV6V4HDRDELTA ?
+                     advertised_mtu - IPV6V4HDRDELTA : 0;
+  __sum16 csum = icmp6h->icmp6_cksum;
 
-  if (ntohs(*pmtu) > IPV6V4HDRDELTA) {
-    icmp6h->icmp6_cksum = csum16_upd(old_csum, *pmtu, htons(ntohs(*pmtu) - IPV6V4HDRDELTA));
-    *pmtu = htons(ntohs(*pmtu) - IPV6V4HDRDELTA);
+  /* ICMPv4 carries a zero 16-bit reserved field followed by a 16-bit MTU.
+   * Read the ICMPv6 value at its full width before applying the header-size
+   * delta, then clamp only the result to the IPv4 field's width. */
+  if (adjusted_mtu > 0xffff) {
+    adjusted_mtu = 0xffff;
   }
+  csum = csum16_upd(csum, htons(advertised_mtu >> 16), 0);
+  csum = csum16_upd(csum, htons(advertised_mtu & 0xffff),
+                    htons(adjusted_mtu));
+  icmp6h->icmp6_mtu = htonl(adjusted_mtu);
+  icmp6h->icmp6_cksum = csum;
 
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
 
