@@ -81,5 +81,6 @@ nat46_instance_t *get_nat46_instance(struct sk_buff *sk);
 
 nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int from_ipair, int to_ipair, int remove_ipair);
 void release_nat46_instance(nat46_instance_t *nat46);
+nat46_instance_t *nat46_swap_instance(nat46_instance_t **slot, nat46_instance_t *new_nat46);
 
 #endif

@@ -49,8 +49,13 @@ nat46_instance_t *alloc_nat46_instance(int npairs, nat46_instance_t *old, int fr
 
 
 nat46_instance_t *get_nat46_instance(struct sk_buff *sk) {
-  nat46_instance_t *nat46 = netdev_nat46_instance(sk->dev);
+  nat46_instance_t *nat46;
+  /* Read priv->nat46 and take our reference while holding ref_lock so that a
+   * concurrent netdev_nat46_set_instance() (which releases/frees the old
+   * instance under the same lock) can never free it underneath us - the
+   * pointer we validate is always kept alive by our refcount++ (Issue 4). */
   spin_lock_bh(&ref_lock);
+  nat46 = netdev_nat46_instance(sk->dev);
   if (is_valid_nat46(nat46)) {
     nat46->refcount++;
     spin_unlock_bh(&ref_lock);
@@ -60,6 +65,20 @@ nat46_instance_t *get_nat46_instance(struct sk_buff *sk) {
     pr_err("[nat46] get_nat46_instance: Could not find a valid NAT46 instance!");
     return NULL;
   }
+}
+
+/* Atomically swap the instance pointer in *slot to new_nat46 and return the old
+ * value. The swap is done under ref_lock so it is fully synchronized with the
+ * unlocked-read-free get_nat46_instance() path (review2 Issue 3): the caller
+ * must release the returned old instance outside the lock (via
+ * release_nat46_instance) to avoid self-deadlock. */
+nat46_instance_t *nat46_swap_instance(nat46_instance_t **slot, nat46_instance_t *new_nat46) {
+  nat46_instance_t *old;
+  spin_lock_bh(&ref_lock);
+  old = *slot;
+  *slot = new_nat46;
+  spin_unlock_bh(&ref_lock);
+  return old;
 }
 
 void release_nat46_instance(nat46_instance_t *nat46) {

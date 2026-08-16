@@ -98,10 +98,15 @@ void *netdev_nat46_instance(struct net_device *dev) {
 
 static void netdev_nat46_set_instance(struct net_device *dev, nat46_instance_t *new_nat46) {
 	nat46_netdev_priv_t *priv = netdev_priv(dev);
-	if(priv->nat46) {
-		release_nat46_instance(priv->nat46);
+	/* Swap the instance pointer under ref_lock so the write is synchronized with
+	 * get_nat46_instance()'s locked read (no unlocked data race on priv->nat46,
+	 * review2 Issue 3), and so priv->nat46 never transiently points at a freed
+	 * instance that a concurrent reader could validate. Release the old instance
+	 * outside the lock (release_nat46_instance takes ref_lock itself). */
+	nat46_instance_t *old = nat46_swap_instance(&priv->nat46, new_nat46);
+	if (old) {
+		release_nat46_instance(old);
 	}
-	priv->nat46 = new_nat46;
 }
 
 static void nat46_netdev_setup(struct net_device *dev)
