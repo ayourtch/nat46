@@ -1,0 +1,2 @@
+# packet assertion
+{"expected_rx_count":0,"checks":[{"count":1,"packet":{"direction":"tx","layers":[{"layertype":"Ipv6","src":"2001:4860:4860::8888","dst":"2001:db8:1:1::1","payload_length":56}]}},{"count":0,"packet":{"direction":"rx","layers":[{"layertype":"Ip","src":"8.8.8.8","dst":"192.168.1.100","proto":1}]}}]}

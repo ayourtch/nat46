@@ -25,6 +25,8 @@ NONATOMIC_QUOTE_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-nonatomic-fragment/inject-tap0.jsonl")
 ICMP_PARAMETER_POINTER_FIXTURE = Path(
     "test-harness/tests/icmp-parameter-pointer-order/inject-tap0.jsonl")
+ICMP_PARAMETER_POINTER_UNMAPPED_FIXTURE = Path(
+    "test-harness/tests/icmp-parameter-pointer-unmapped/inject-tap0.jsonl")
 MAP_ADDRESS_WIDTH_FIXTURE = Path(
     "test-harness/tests/map-address-width/inject-tap0.jsonl")
 UNMAPPABLE_QUOTE_FIXTURE = Path(
@@ -342,6 +344,10 @@ def main():
     ICMP_PARAMETER_POINTER_FIXTURE.write_text("".join(
         json.dumps(packet, separators=(",", ":")) + "\n"
         for packet in parameter_problem_packets))
+    parameter_problem_unmapped = icmpv6_error_packet(
+        parameter_quoted_packet, icmp_type=4, icmp_code=0, field=2)
+    ICMP_PARAMETER_POINTER_UNMAPPED_FIXTURE.write_text(
+        json.dumps(parameter_problem_unmapped, separators=(",", ":")) + "\n")
 
     partial_fragment = struct.pack("!BBH", 17, 0, 0)
     quoted_packet = (ipv6_header(8, 44, LOCAL_V6, REMOTE_V6)
