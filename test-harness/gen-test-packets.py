@@ -53,6 +53,10 @@ UDP_PADDING_FIXTURE = Path(
     "test-harness/tests/v4-udp-padding-checksum/inject-tap0.jsonl")
 UDP_PADDING_EXPECTED = Path(
     "test-harness/test-data/expected/v4-udp-padding-checksum.jsonl")
+UDP_ZERO_FIXTURE = Path(
+    "test-harness/tests/udp-zero-checksum/inject-tap0.jsonl")
+UDP_ZERO_EXPECTED = Path(
+    "test-harness/test-data/expected/udp-zero-checksum.jsonl")
 
 
 def checksum(data):
@@ -99,6 +103,38 @@ def ipv4_transport_checksum(src, dst, protocol, segment):
                     + ipaddress.IPv4Address(dst).packed
                     + struct.pack("!BBH", 0, protocol, len(segment)))
     return checksum(pseudoheader + segment)
+
+
+def udp_segment_for_zero_output_checksum(output_src, output_dst,
+                                         source_src, source_dst,
+                                         sport, dport, payload_prefix):
+    payload = bytearray(payload_prefix + b"\0\0")
+    length = 8 + len(payload)
+    segment = bytearray(struct.pack("!HHHH", sport, dport, length, 0)
+                        + payload)
+    output_checksum = (ipv4_transport_checksum
+                       if ipaddress.ip_address(output_src).version == 4
+                       else ipv6_transport_checksum)
+    source_checksum = (ipv4_transport_checksum
+                       if ipaddress.ip_address(source_src).version == 4
+                       else ipv6_transport_checksum)
+
+    for correction in range(0x10000):
+        struct.pack_into("!H", segment, len(segment) - 2, correction)
+        if output_checksum(output_src, output_dst, 17, segment) == 0:
+            break
+    else:
+        raise AssertionError("could not construct a computed-zero UDP vector")
+
+    source_value = source_checksum(source_src, source_dst, 17, segment)
+    assert source_value not in (0, 0xffff)
+    struct.pack_into("!H", segment, 6, source_value)
+    assert source_checksum(source_src, source_dst, 17, segment) == 0
+
+    output_segment = bytearray(segment)
+    struct.pack_into("!H", output_segment, 6, 0xffff)
+    assert output_checksum(output_src, output_dst, 17, output_segment) == 0
+    return bytes(segment), bytes(output_segment)
 
 
 def ipv4_tcp_packet(src, dst, sport, dport, payload):
@@ -290,6 +326,245 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 
 
 def main():
+    v4_to_v6_source, v4_to_v6_output = (
+        udp_segment_for_zero_output_checksum(
+            LOCAL_V6, REMOTE_V6,
+            "192.168.1.100", "8.8.8.8",
+            41001, 42001, b"V4-TO-V6-ZERO:"))
+    v6_to_v4_source, v6_to_v4_output = (
+        udp_segment_for_zero_output_checksum(
+            "8.8.8.8", "192.168.1.100",
+            REMOTE_V6, LOCAL_V6,
+            41002, 42002, b"V6-TO-V4-ZERO:"))
+    quoted_source, quoted_output = udp_segment_for_zero_output_checksum(
+        "192.168.1.100", "8.8.8.8",
+        LOCAL_V6, REMOTE_V6,
+        41003, 42003, b"QUOTE-V6-V4-ZERO::")
+
+    v4_to_v6_packet = ipv4_fragment_packet(
+        "192.168.1.100", "8.8.8.8", 17, 0x2468, 0, False,
+        v4_to_v6_source)
+    v6_to_v4_packet = ipv6_extension_packet(
+        17, b"", v6_to_v4_source, 1100000)
+    quoted_ipv6 = (ipv6_header(len(quoted_source), 17,
+                               LOCAL_V6, REMOTE_V6)
+                   + quoted_source)
+    quoted_packet = icmpv6_error_packet(quoted_ipv6, timestamp_us=1200000)
+    UDP_ZERO_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in (v4_to_v6_packet, v6_to_v4_packet, quoted_packet)))
+
+    quoted_ipv4 = bytearray(struct.pack(
+        "!BBHHHBBH", 0x45, 0, 20 + len(quoted_output), 0, 0, 64, 17, 0))
+    quoted_ipv4.extend(ipaddress.IPv4Address("192.168.1.100").packed)
+    quoted_ipv4.extend(ipaddress.IPv4Address("8.8.8.8").packed)
+    struct.pack_into("!H", quoted_ipv4, 10, checksum(quoted_ipv4))
+
+    unfragmented_flags = {
+        "reserved": False,
+        "dont_fragment": False,
+        "more_fragments": False,
+        "fragment_offset": 0,
+    }
+    udp_zero_spec = {
+        "expected_rx_count": 3,
+        "checks": [
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip",
+                            "version": 4,
+                            "ihl": 5,
+                            "tos": 0,
+                            "len": 20 + len(v4_to_v6_source),
+                            "id": 0x2468,
+                            "flags": unfragmented_flags,
+                            "ttl": 254,
+                            "proto": 17,
+                            "src": "192.168.1.100",
+                            "dst": "8.8.8.8",
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Udp",
+                            "sport": 41001,
+                            "dport": 42001,
+                            "len": len(v4_to_v6_source),
+                            "chksum": struct.unpack_from(
+                                "!H", v4_to_v6_source, 6)[0],
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": list(v4_to_v6_source[8:]),
+                        },
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": len(v4_to_v6_output),
+                            "next_header": 17,
+                            "hop_limit": 254,
+                            "src": LOCAL_V6,
+                            "dst": REMOTE_V6,
+                        },
+                        {
+                            "layertype": "Udp",
+                            "sport": 41001,
+                            "dport": 42001,
+                            "len": len(v4_to_v6_output),
+                            "chksum": 0xffff,
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": list(v4_to_v6_output[8:]),
+                        },
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": len(v6_to_v4_source),
+                            "next_header": 17,
+                            "hop_limit": 63,
+                            "src": REMOTE_V6,
+                            "dst": LOCAL_V6,
+                        },
+                        {
+                            "layertype": "Udp",
+                            "sport": 41002,
+                            "dport": 42002,
+                            "len": len(v6_to_v4_source),
+                            "chksum": struct.unpack_from(
+                                "!H", v6_to_v4_source, 6)[0],
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": list(v6_to_v4_source[8:]),
+                        },
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip",
+                            "version": 4,
+                            "ihl": 5,
+                            "tos": 0,
+                            "len": 20 + len(v6_to_v4_output),
+                            "flags": unfragmented_flags,
+                            "ttl": 63,
+                            "proto": 17,
+                            "src": "8.8.8.8",
+                            "dst": "192.168.1.100",
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Udp",
+                            "sport": 41002,
+                            "dport": 42002,
+                            "len": len(v6_to_v4_output),
+                            "chksum": 0xffff,
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": list(v6_to_v4_output[8:]),
+                        },
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": 8 + len(quoted_ipv6),
+                            "next_header": 58,
+                            "hop_limit": 63,
+                            "src": REMOTE_V6,
+                            "dst": LOCAL_V6,
+                        },
+                        {
+                            "layertype": "Icmpv6",
+                            "type_": 1,
+                            "code": 0,
+                            "nonzero_fields": ["checksum"],
+                        },
+                        {
+                            "layertype": "icmpv6DestUnreach",
+                            "unused": 0,
+                            "invoking_packet": list(quoted_ipv6),
+                        },
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip",
+                            "version": 4,
+                            "ihl": 5,
+                            "tos": 0,
+                            "len": 28 + len(quoted_ipv4) + len(quoted_output),
+                            "flags": unfragmented_flags,
+                            "ttl": 63,
+                            "proto": 1,
+                            "src": "8.8.8.8",
+                            "dst": "192.168.1.100",
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Icmp",
+                            "typ": 3,
+                            "code": 1,
+                            "nonzero_fields": ["chksum"],
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": list(
+                                b"\0\0\0\0" + quoted_ipv4
+                                + quoted_output),
+                        },
+                    ],
+                },
+            },
+        ],
+    }
+    UDP_ZERO_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps(udp_zero_spec, separators=(",", ":")) + "\n")
+
     udp_padding_payload = b"UDP-DATAGRAM-PAYLOAD-OK!"
     udp_trailing_padding = (bytes.fromhex("de ad be ef ca fe f0 0d")
                             + b"NOT-UDP-PAYLOAD!")

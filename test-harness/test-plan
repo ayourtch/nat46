@@ -22,3 +22,4 @@ icmp-parameter-pointer-unmapped
 icmp-packet-too-big-mtu-width
 icmp-mtu-reserved-bits
 v4-udp-padding-checksum
+udp-zero-checksum
