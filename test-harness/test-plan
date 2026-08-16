@@ -25,6 +25,7 @@ icmp-embedded-headers
 icmp-quote-output-limit
 icmp-quote-fragmented-icmp
 icmp-quote-source-route
+icmp-quote-ipv4-padding
 v4-udp-padding-checksum
 udp-zero-checksum
 rfc6052-canonical

@@ -79,6 +79,10 @@ QUOTED_SOURCE_ROUTE_FIXTURE = Path(
     "test-harness/tests/icmp-quote-source-route/inject-tap0.jsonl")
 QUOTED_SOURCE_ROUTE_EXPECTED = Path(
     "test-harness/test-data/expected/icmp-quote-source-route.jsonl")
+QUOTED_IPV4_PADDING_FIXTURE = Path(
+    "test-harness/tests/icmp-quote-ipv4-padding/inject-tap0.jsonl")
+QUOTED_IPV4_PADDING_EXPECTED = Path(
+    "test-harness/test-data/expected/icmp-quote-ipv4-padding.jsonl")
 
 
 def checksum(data):
@@ -316,6 +320,139 @@ def generate_quoted_source_routes():
         json.dumps(packet, separators=(",", ":")) + "\n"
         for packet in packets))
     QUOTED_SOURCE_ROUTE_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": 2,
+            "checks": checks,
+        }, separators=(",", ":")) + "\n")
+
+
+def generate_quoted_ipv4_padding():
+    padded_marker = b"PADDED-DATAGRAM!"
+    padding = b"LINKPAD-P21!"
+    truncated_marker = b"TRUNCATED-CTRL!!"
+    assert len(padded_marker) == len(truncated_marker) == 16
+    assert len(padding) == 12
+
+    padded_source = transport_segment(
+        "8.8.8.8", "192.168.1.100", 17, 43001, 44001,
+        padded_marker)
+    padded_inner = (ipv4_header(
+        "8.8.8.8", "192.168.1.100", 17, len(padded_source),
+        identification=0x3b01)
+                    + padded_source)
+    padded_quote = padded_inner + padding
+
+    truncated_source = transport_segment(
+        "8.8.8.8", "192.168.1.100", 17, 43002, 44002,
+        truncated_marker)
+    truncated_header = ipv4_header(
+        "8.8.8.8", "192.168.1.100", 17, len(truncated_source),
+        identification=0x3b02)
+    truncated_transport_len = 12
+    truncated_quote = (
+        truncated_header + truncated_source[:truncated_transport_len])
+
+    assert len(padded_inner) == len(truncated_header) + len(truncated_source)
+    assert len(padded_inner) == 44
+    assert len(padded_quote) == 56
+    assert len(truncated_quote) == 32
+    assert struct.unpack_from("!H", padded_inner, 2)[0] == 44
+    assert struct.unpack_from("!H", truncated_header, 2)[0] == 44
+    assert checksum(padded_inner[:20]) == 0
+    assert checksum(truncated_header) == 0
+
+    cases = (
+        (padded_quote, padded_source, padded_marker, padding,
+         0x4b01, 3, 43001, 44001, 1000000),
+        (truncated_quote, truncated_source, truncated_marker, b"",
+         0x4b02, 1, 43002, 44002, 1100000),
+    )
+    packets = []
+    checks = []
+
+    def translated_check(invoking_packet, translated_code, count):
+        translated_icmp = bytearray(
+            struct.pack("!BBHI", 1, translated_code, 0, 0)
+            + invoking_packet)
+        translated_checksum = icmpv6_checksum(
+            LOCAL_V6, REMOTE_V6, translated_icmp)
+        struct.pack_into("!H", translated_icmp, 2, translated_checksum)
+        assert icmpv6_checksum(LOCAL_V6, REMOTE_V6, translated_icmp) == 0
+        return {
+            "count": count,
+            "packet": {
+                "direction": "rx",
+                "valid_checksums": True,
+                "layers": [
+                    {
+                        "layertype": "Ipv6",
+                        "version_class": 0x60000000,
+                        "payload_length": len(translated_icmp),
+                        "next_header": 58,
+                        "hop_limit": 254,
+                        "src": LOCAL_V6,
+                        "dst": REMOTE_V6,
+                    },
+                    {
+                        "layertype": "Icmpv6",
+                        "type_": 1,
+                        "code": translated_code,
+                        "checksum": translated_checksum,
+                    },
+                    {
+                        "layertype": "icmpv6DestUnreach",
+                        "unused": 0,
+                        "invoking_packet": list(invoking_packet),
+                    },
+                ],
+            },
+        }
+
+    for (source_quote, full_source, marker, trailing_padding,
+         outer_identification, outer_code, sport, dport,
+         timestamp_us) in cases:
+        packet = icmpv4_error_packet(
+            source_quote, timestamp_us, outer_identification,
+            code=outer_code)
+        source_message = bytes(packet["layers"][2]["data"])
+        assert checksum(source_message) == 0
+        packets.append(packet)
+        checks.append({
+            "count": 1,
+            "packet": {
+                "direction": "tx",
+                "valid_checksums": True,
+                "layers": [
+                    {
+                        "layertype": "Ip",
+                        "id": outer_identification,
+                        "proto": 1,
+                        "src": "192.168.1.100",
+                        "dst": "8.8.8.8",
+                    },
+                    {"layertype": "Icmp", "typ": 3, "code": outer_code},
+                    {"layertype": "raw", "data": list(source_message[4:])},
+                ],
+            },
+        })
+
+        translated_full = transport_segment(
+            REMOTE_V6, LOCAL_V6, 17, sport, dport, marker)
+        visible_transport_len = len(source_quote) - 20 - len(trailing_padding)
+        translated_quote = (ipv6_header(
+            len(full_source), 17, REMOTE_V6, LOCAL_V6, hop_limit=47)
+                            + translated_full[:visible_transport_len])
+        translated_code = 4 if outer_code == 3 else 0
+        checks.append(translated_check(translated_quote, translated_code, 1))
+        if trailing_padding:
+            checks.append(translated_check(
+                translated_quote + trailing_padding, translated_code, 0))
+
+    QUOTED_IPV4_PADDING_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in packets))
+    QUOTED_IPV4_PADDING_EXPECTED.write_text(
         "# packet assertion\n"
         + json.dumps({
             "expected_rx_count": 2,
@@ -1072,6 +1209,7 @@ def main():
     generate_icmp_quote_output_limit()
     generate_quoted_fragmented_icmp()
     generate_quoted_source_routes()
+    generate_quoted_ipv4_padding()
 
     rfc6052_prefixes = (
         (32, "2001:db8::/32"),
