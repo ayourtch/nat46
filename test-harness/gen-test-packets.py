@@ -27,6 +27,8 @@ ICMP_PARAMETER_POINTER_FIXTURE = Path(
     "test-harness/tests/icmp-parameter-pointer-order/inject-tap0.jsonl")
 ICMP_PARAMETER_POINTER_UNMAPPED_FIXTURE = Path(
     "test-harness/tests/icmp-parameter-pointer-unmapped/inject-tap0.jsonl")
+ICMP_PACKET_TOO_BIG_MTU_FIXTURE = Path(
+    "test-harness/tests/icmp-packet-too-big-mtu-width/inject-tap0.jsonl")
 MAP_ADDRESS_WIDTH_FIXTURE = Path(
     "test-harness/tests/map-address-width/inject-tap0.jsonl")
 UNMAPPABLE_QUOTE_FIXTURE = Path(
@@ -336,6 +338,14 @@ def main():
     parameter_quoted_packet = (
         ipv6_header(len(parameter_quoted_icmp), 58, LOCAL_V6, REMOTE_V6)
         + parameter_quoted_icmp)
+    packet_too_big_packets = tuple(
+        icmpv6_error_packet(
+            parameter_quoted_packet, timestamp_us=1000000 + index * 100000,
+            icmp_type=2, icmp_code=0, field=advertised_mtu)
+        for index, advertised_mtu in enumerate((1280, 1500, 65535, 65536)))
+    ICMP_PACKET_TOO_BIG_MTU_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in packet_too_big_packets))
     parameter_problem_packets = tuple(
         icmpv6_error_packet(
             parameter_quoted_packet, timestamp_us=1000000 + index * 100000,
