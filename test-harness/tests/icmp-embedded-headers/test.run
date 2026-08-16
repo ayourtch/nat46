@@ -1,6 +1,8 @@
 # ICMP errors return opposite to the earlier TCP or UDP packet in their
 # quote. Translate both embedded network headers with the reverse rule
 # direction while retaining exact protocol, length, and checksum fields.
+# RFC 4884 vectors independently require the translated quote-length field
+# and the recognizable extension bytes at the post-padding extension offset.
 
 echo add nat46dev > /proc/net/nat46/control
 ifconfig nat46dev up

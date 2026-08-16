@@ -156,14 +156,29 @@ def ipv4_header(src, dst, protocol, payload_len, identification=0,
     return bytes(header)
 
 
-def icmpv4_error_packet(quoted_packet, timestamp_us, identification):
-    message = bytearray(struct.pack("!BBHI", 3, 3, 0, 0) + quoted_packet)
+def icmpv4_error_packet(quoted_packet, timestamp_us, identification,
+                        field=0, trailing_data=b""):
+    message = bytearray(
+        struct.pack("!BBHI", 3, 3, 0, field)
+        + quoted_packet + trailing_data)
     struct.pack_into("!H", message, 2, checksum(bytes(message)))
     packet = ipv4_fragment_packet(
         "192.168.1.100", "8.8.8.8", 1, identification, 0, False,
         message)
     packet["timestamp_us"] = timestamp_us
     return packet
+
+
+def rfc4884_extension(c_type, marker):
+    assert len(marker) == 4
+    extension = bytearray(
+        struct.pack("!BBH", 0x20, 0, 0)
+        + struct.pack("!HBB", 8, 0xf7, c_type)
+        + marker)
+    struct.pack_into("!H", extension, 2, checksum(extension))
+    assert len(extension) == 12
+    assert checksum(extension) == 0
+    return bytes(extension)
 
 
 def generate_icmp_embedded_headers():
@@ -295,13 +310,193 @@ def generate_icmp_embedded_headers():
             },
         })
 
+    # RFC 4884 gives both extensible directions an explicit 128-byte quote.
+    # Translating the IPv4 header grows the first quote to 148 bytes, which is
+    # padded to 152 before its recognizable extension. The reverse direction
+    # shrinks the packet to 108 bytes and pads it back to the 128-byte minimum.
+    v4_payload = b"RFC4884-V4-QUOTE:" + bytes(range(83))
+    v4_source_segment = transport_segment(
+        "8.8.8.8", "192.168.1.100", 17, 33434, 45000, v4_payload)
+    v4_quote = (ipv4_header(
+        "8.8.8.8", "192.168.1.100", 17, len(v4_source_segment),
+        identification=0x4884)
+                + v4_source_segment)
+    v4_extension = rfc4884_extension(1, b"V4X!")
+    packets.append(icmpv4_error_packet(
+        v4_quote, 1400000, 0x5884, field=32 << 16,
+        trailing_data=v4_extension))
+
+    v4_translated_segment = transport_segment(
+        REMOTE_V6, LOCAL_V6, 17, 33434, 45000, v4_payload)
+    v6_padded_quote = (ipv6_header(
+        len(v4_translated_segment), 17, REMOTE_V6, LOCAL_V6, hop_limit=47)
+                       + v4_translated_segment + bytes(4))
+    v4_to_v6_field = 19 << 24
+    v4_to_v6_icmp = bytearray(
+        struct.pack("!BBHI", 1, 4, 0, v4_to_v6_field)
+        + v6_padded_quote + v4_extension)
+    v4_to_v6_checksum = icmpv6_checksum(
+        LOCAL_V6, REMOTE_V6, v4_to_v6_icmp)
+    struct.pack_into("!H", v4_to_v6_icmp, 2, v4_to_v6_checksum)
+
+    assert len(v4_quote) == 128
+    assert len(v6_padded_quote) == 152
+    assert v4_to_v6_icmp[4] == 19
+    assert v4_to_v6_icmp[8 + 152:] == v4_extension
+    assert icmpv6_checksum(
+        LOCAL_V6, REMOTE_V6, v4_to_v6_icmp) == 0
+    checks.extend((
+        {
+            "count": 1,
+            "packet": {
+                "direction": "rx",
+                "layers": [
+                    {
+                        "layertype": "Ipv6",
+                        "payload_length": len(v4_to_v6_icmp),
+                        "src": LOCAL_V6,
+                        "dst": REMOTE_V6,
+                    },
+                    {
+                        "layertype": "Icmpv6",
+                        "type_": 1,
+                        "code": 4,
+                    },
+                    {
+                        "layertype": "icmpv6DestUnreach",
+                        "unused": v4_to_v6_field,
+                    },
+                ],
+            },
+        },
+        {
+            "count": 1,
+            "packet": {
+                "direction": "rx",
+                "valid_checksums": True,
+                "layers": [
+                    {
+                        "layertype": "Ipv6",
+                        "version_class": 0x60000000,
+                        "payload_length": len(v4_to_v6_icmp),
+                        "next_header": 58,
+                        "hop_limit": 254,
+                        "src": LOCAL_V6,
+                        "dst": REMOTE_V6,
+                    },
+                    {
+                        "layertype": "Icmpv6",
+                        "type_": 1,
+                        "code": 4,
+                        "checksum": v4_to_v6_checksum,
+                    },
+                    {
+                        "layertype": "icmpv6DestUnreach",
+                        "invoking_packet": list(
+                            v6_padded_quote + v4_extension),
+                    },
+                ],
+            },
+        },
+    ))
+
+    v6_payload = b"RFC4884-V6-QUOTE:" + bytes(range(63))
+    v6_source_segment = transport_segment(
+        LOCAL_V6, REMOTE_V6, 17, 45001, 33435, v6_payload)
+    v6_quote = (ipv6_header(
+        len(v6_source_segment), 17, LOCAL_V6, REMOTE_V6, hop_limit=47)
+                + v6_source_segment)
+    v6_extension = rfc4884_extension(2, b"V6X!")
+    packets.append(icmpv6_error_packet(
+        v6_quote + v6_extension, timestamp_us=1500000,
+        icmp_type=3, icmp_code=0, field=16 << 24))
+
+    v6_translated_segment = transport_segment(
+        "192.168.1.100", "8.8.8.8", 17, 45001, 33435, v6_payload)
+    v4_padded_quote = (ipv4_header(
+        "192.168.1.100", "8.8.8.8", 17, len(v6_translated_segment),
+        ttl=47)
+                       + v6_translated_segment + bytes(20))
+    v6_to_v4_field = 32 << 16
+    v6_to_v4_icmp = bytearray(
+        struct.pack("!BBHI", 11, 0, 0, v6_to_v4_field)
+        + v4_padded_quote + v6_extension)
+    v6_to_v4_checksum = checksum(v6_to_v4_icmp)
+    struct.pack_into("!H", v6_to_v4_icmp, 2, v6_to_v4_checksum)
+
+    assert len(v6_quote) == 128
+    assert len(v4_padded_quote) == 128
+    assert v6_to_v4_icmp[5] == 32
+    assert v6_to_v4_icmp[8 + 128:] == v6_extension
+    assert checksum(v6_to_v4_icmp) == 0
+    checks.extend((
+        {
+            "count": 1,
+            "packet": {
+                "direction": "rx",
+                "layers": [
+                    {
+                        "layertype": "Ip",
+                        "len": 20 + len(v6_to_v4_icmp),
+                        "src": "8.8.8.8",
+                        "dst": "192.168.1.100",
+                    },
+                    {
+                        "layertype": "Icmp",
+                        "typ": 11,
+                        "code": 0,
+                    },
+                    {
+                        "layertype": "raw",
+                        "data_prefix": list(struct.pack(
+                            "!I", v6_to_v4_field)),
+                    },
+                ],
+            },
+        },
+        {
+            "count": 1,
+            "packet": {
+                "direction": "rx",
+                "valid_checksums": True,
+                "layers": [
+                    {
+                        "layertype": "Ip",
+                        "version": 4,
+                        "ihl": 5,
+                        "tos": 0,
+                        "len": 20 + len(v6_to_v4_icmp),
+                        "flags": unfragmented_flags,
+                        "ttl": 63,
+                        "proto": 1,
+                        "src": "8.8.8.8",
+                        "dst": "192.168.1.100",
+                        "options": [],
+                    },
+                    {
+                        "layertype": "Icmp",
+                        "typ": 11,
+                        "code": 0,
+                        "chksum": v6_to_v4_checksum,
+                    },
+                    {
+                        "layertype": "raw",
+                        "data": list(
+                            struct.pack("!I", v6_to_v4_field)
+                            + v4_padded_quote + v6_extension),
+                    },
+                ],
+            },
+        },
+    ))
+
     ICMP_EMBEDDED_FIXTURE.write_text("".join(
         json.dumps(packet, separators=(",", ":")) + "\n"
         for packet in packets))
     ICMP_EMBEDDED_EXPECTED.write_text(
         "# packet assertion\n"
         + json.dumps({
-            "expected_rx_count": 4,
+            "expected_rx_count": 6,
             "checks": checks,
         }, separators=(",", ":")) + "\n")
 
