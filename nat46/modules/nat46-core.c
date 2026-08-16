@@ -550,100 +550,23 @@ static void
 bitarray_copy(const void *src_org, int src_offset, int src_len,
                     void *dst_org, int dst_offset)
 {
-/*
-    static const unsigned char mask[] =
-        { 0x55, 0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff };
-*/
-    static const unsigned char reverse_mask[] =
-        { 0x55, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff };
-    static const unsigned char reverse_mask_xor[] =
-        { 0xff, 0x7f, 0x3f, 0x1f, 0x0f, 0x07, 0x03, 0x01, 0x00 };
+    const unsigned char *src = src_org;
+    unsigned char *dst = dst_org;
+    int i;
 
-    if (src_len) {
-        const unsigned char *src;
-              unsigned char *dst;
-        int                  src_offset_modulo,
-                             dst_offset_modulo;
+    /* Copy in network bit order.  Reading each requested bit directly keeps
+     * the helper within the caller-provided logical source range even when
+     * source and destination offsets have different byte alignments. */
+    for (i = 0; i < src_len; i++) {
+        int src_bit = src_offset + i;
+        int dst_bit = dst_offset + i;
+        unsigned char dst_mask = 1U << (7 - (dst_bit % CHAR_BIT));
 
-        src = src_org + (src_offset / CHAR_BIT);
-        dst = dst_org + (dst_offset / CHAR_BIT);
-
-        src_offset_modulo = src_offset % CHAR_BIT;
-        dst_offset_modulo = dst_offset % CHAR_BIT;
-
-        if (src_offset_modulo == dst_offset_modulo) {
-            int              byte_len;
-            int              src_len_modulo;
-            if (src_offset_modulo) {
-                unsigned char   c;
-
-                c = reverse_mask_xor[dst_offset_modulo]     & *src++;
-
-                PREPARE_FIRST_COPY();
-                *dst++ |= c;
-            }
-
-            byte_len = src_len / CHAR_BIT;
-            src_len_modulo = src_len % CHAR_BIT;
-
-            if (byte_len) {
-                memcpy(dst, src, byte_len);
-                src += byte_len;
-                dst += byte_len;
-            }
-            if (src_len_modulo) {
-                *dst     &= reverse_mask_xor[src_len_modulo];
-                *dst |= reverse_mask[src_len_modulo]     & *src;
-            }
+        if (src[src_bit / CHAR_BIT] &
+            (1U << (7 - (src_bit % CHAR_BIT)))) {
+            dst[dst_bit / CHAR_BIT] |= dst_mask;
         } else {
-            int             bit_diff_ls,
-                            bit_diff_rs;
-            int             byte_len;
-            int             src_len_modulo;
-            unsigned char   c;
-            /*
-             * Begin: Line things up on destination.
-             */
-            if (src_offset_modulo > dst_offset_modulo) {
-                bit_diff_ls = src_offset_modulo - dst_offset_modulo;
-                bit_diff_rs = CHAR_BIT - bit_diff_ls;
-
-                c = *src++ << bit_diff_ls;
-                c |= *src >> bit_diff_rs;
-                c     &= reverse_mask_xor[dst_offset_modulo];
-            } else {
-                bit_diff_rs = dst_offset_modulo - src_offset_modulo;
-                bit_diff_ls = CHAR_BIT - bit_diff_rs;
-
-                c = *src >> bit_diff_rs     &
-                    reverse_mask_xor[dst_offset_modulo];
-            }
-            PREPARE_FIRST_COPY();
-            *dst++ |= c;
-
-            /*
-             * Middle: copy with only shifting the source.
-             */
-            byte_len = src_len / CHAR_BIT;
-
-            while (--byte_len >= 0) {
-                c = *src++ << bit_diff_ls;
-                c |= *src >> bit_diff_rs;
-                *dst++ = c;
-            }
-
-            /*
-             * End: copy the remaining bits;
-             */
-            src_len_modulo = src_len % CHAR_BIT;
-            if (src_len_modulo) {
-                c = *src++ << bit_diff_ls;
-                c |= *src >> bit_diff_rs;
-                c     &= reverse_mask[src_len_modulo];
-
-                *dst     &= reverse_mask_xor[src_len_modulo];
-                *dst |= c;
-            }
+            dst[dst_bit / CHAR_BIT] &= ~dst_mask;
         }
     }
 }
