@@ -1116,15 +1116,16 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
     if (v6_len < (int)(sizeof(*ip6h) + sizeof(*fh))) {
       return 0;
     }
-    if (quoted_ipv6_fragment_is_atomic(fh)) {
-      /* Atomic fragment */
-      proto = fh->nexthdr;
-      ipid = ipv6_frag_id_to_ipv4(fh->identification);
-      v6_len -= 8;
-      infrag_payload_len -= 8;
-      *ptailTruncSize += 8;
-      ipflags = 0;
+    if (!quoted_ipv6_fragment_is_atomic(fh)) {
+      return 0;
     }
+    /* Atomic fragment */
+    proto = fh->nexthdr;
+    ipid = ipv6_frag_id_to_ipv4(fh->identification);
+    v6_len -= 8;
+    infrag_payload_len -= 8;
+    *ptailTruncSize += 8;
+    ipflags = 0;
   }
 
   /* An ICMP quote may contain less payload than the inner header advertises. */
