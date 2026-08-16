@@ -896,7 +896,7 @@ static int is_last_pair_in_group(nat46_xlate_rulepair_t *apair) {
   return ( (apair->local.style != NAT46_XLATE_NONE) && (apair->remote.style != NAT46_XLATE_NONE) );
 }
 
-static void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, __u32 *pv4saddr, __u32 *pv4daddr) {
+static int pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *ip6h, __u32 *pv4saddr, __u32 *pv4daddr) {
   int ipair = 0;
   nat46_xlate_rulepair_t *apair = NULL;
   int xlate_src = -1;
@@ -927,6 +927,7 @@ static void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *
     }
   }
   nat46debug(5, "[nat46payload] xlate results: src %d dst %d", xlate_src, xlate_dst);
+  return ((xlate_src >= 0) && (xlate_dst >= 0));
 }
 
 /*
@@ -936,7 +937,7 @@ static void pairs_xlate_v6_to_v4_inner(nat46_instance_t *nat46, struct ipv6hdr *
  */
 static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_hdr, int v6_len, u16 *ul_sum, int *ptailTruncSize) {
   struct ipv6hdr *ip6h = pv6;
-  __u32 v4saddr, v4daddr;
+  __u32 v4saddr = 0, v4daddr = 0;
   struct iphdr new_ipv4;
   struct iphdr *iph = &new_ipv4;
   u16 proto = ip6h->nexthdr;
@@ -948,7 +949,9 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
    * The packet is supposedly our own packet after translation - so the rules
    * will be swapped compared to translation of the outer packet
    */
-  pairs_xlate_v6_to_v4_inner(nat46, pv6, &v4saddr, &v4daddr);
+  if (!pairs_xlate_v6_to_v4_inner(nat46, pv6, &v4saddr, &v4daddr)) {
+    return 0;
+  }
 
   if (proto == NEXTHDR_FRAGMENT) {
     struct frag_hdr *fh = (struct frag_hdr*)(ip6h + 1);
@@ -1083,6 +1086,9 @@ static void nat46_fixup_icmp6_dest_unreach(nat46_instance_t *nat46, struct ipv6h
       ip6h->nexthdr = NEXTHDR_NONE;
   }
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
+  if (!len) {
+    ip6h->nexthdr = NEXTHDR_NONE;
+  }
 }
 
 static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr *ip6h, struct icmp6hdr *icmp6h, struct sk_buff *old_skb, int *ptailTruncSize, int len) {
@@ -1130,6 +1136,11 @@ static void nat46_fixup_icmp6_pkt_toobig(nat46_instance_t *nat46, struct ipv6hdr
 
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
 
+  if (!len) {
+    ip6h->nexthdr = NEXTHDR_NONE;
+    return;
+  }
+
   update_icmp6_type_code(nat46, icmp6h, 3, 4);
 
 }
@@ -1141,6 +1152,11 @@ static void nat46_fixup_icmp6_time_exceed(nat46_instance_t *nat46, struct ipv6hd
    * exclude the ICMPv6 pseudo-header.  The Code is unchanged.
    */
   len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
+
+  if (!len) {
+    ip6h->nexthdr = NEXTHDR_NONE;
+    return;
+  }
 
   update_icmp6_type_code(nat46, icmp6h, 11, icmp6h->icmp6_code);
 }
@@ -1195,6 +1211,9 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
           *pptr4 = 0xff & new_pptr;
           update_icmp6_type_code(nat46, icmp6h, 12, 0);
           len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
+          if (!len) {
+            ip6h->nexthdr = NEXTHDR_NONE;
+          }
         } else {
           ip6h->nexthdr = NEXTHDR_NONE;
         }
@@ -1208,6 +1227,9 @@ static void nat46_fixup_icmp6_paramprob(nat46_instance_t *nat46, struct ipv6hdr 
       *pptr6 = 0;
       update_icmp6_type_code(nat46, icmp6h, 3, 2);
       len = xlate_payload6_to4(nat46, (icmp6h + 1), get_next_header_ptr6((icmp6h + 1), len), len, &icmp6h->icmp6_cksum, ptailTruncSize);
+      if (!len) {
+        ip6h->nexthdr = NEXTHDR_NONE;
+      }
       break;
     case 2: /* fallthrough to default */
     default:
@@ -1742,6 +1764,9 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
         nat46debug_dump(nat46, 10, icmp6h, l3_infrag_payload_len);
         nat46_fixup_icmp6(nat46, ip6h, icmp6h, old_skb, &tailTruncSize,
                           l3_infrag_payload_len - sizeof(*icmp6h));
+        if (ip6h->nexthdr == NEXTHDR_NONE) {
+          goto done;
+        }
         proto = IPPROTO_ICMP;
         break;
         }
