@@ -33,6 +33,10 @@ V6_FRAGMENT_ID_FIXTURE = Path(
     "test-harness/tests/v6-frag-id/inject-tap0.jsonl")
 V6_EXTENSION_HEADERS_FIXTURE = Path(
     "test-harness/tests/v6-extension-headers/inject-tap0.jsonl")
+V4_DF_FRAGMENTATION_FIXTURE = Path(
+    "test-harness/tests/v4-df-fragmentation/inject-tap0.jsonl")
+V6_DF_THRESHOLD_FIXTURE = Path(
+    "test-harness/tests/v6-df-threshold/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -131,9 +135,12 @@ def ipv4_tcp_packet(src, dst, sport, dport, payload):
 
 
 def ipv4_fragment_packet(src, dst, protocol, identification,
-                         fragment_offset, more_fragments, payload):
+                         fragment_offset, more_fragments, payload,
+                         dont_fragment=False):
     total_length = 20 + len(payload)
-    fragment_field = fragment_offset | (0x2000 if more_fragments else 0)
+    fragment_field = (fragment_offset
+                      | (0x2000 if more_fragments else 0)
+                      | (0x4000 if dont_fragment else 0))
     ipv4 = bytearray(struct.pack(
         "!BBHHHBBH", 0x45, 0, total_length, identification,
         fragment_field, 255, protocol, 0))
@@ -159,7 +166,7 @@ def ipv4_fragment_packet(src, dst, protocol, identification,
                 "id": identification,
                 "flags": {
                     "reserved": False,
-                    "dont_fragment": False,
+                    "dont_fragment": dont_fragment,
                     "more_fragments": more_fragments,
                     "fragment_offset": fragment_offset,
                 },
@@ -407,6 +414,28 @@ def main():
         json.dumps(fragment, separators=(",", ":")) + "\n"
         for fragment in v6_fragment_ids))
 
+    fragmentability_packets = []
+    for index, (tcp_length, dport, identification, dont_fragment) in enumerate(
+            ((1240, 81, 0x3333, False),
+             (1241, 82, 0x4444, False),
+             (1241, 83, 0x5555, True))):
+        payload = bytes([42]) * (tcp_length - 20)
+        tcp = bytearray(struct.pack(
+            "!HHIIBBHHH", 12345, dport, 0, 0, 0x50, 2, 8192, 0, 0)
+            + payload)
+        struct.pack_into(
+            "!H", tcp, 16,
+            ipv4_transport_checksum(
+                "192.168.1.100", "8.8.8.8", 6, tcp))
+        packet = ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 6, identification, 0, False,
+            tcp, dont_fragment=dont_fragment)
+        packet["timestamp_us"] += index * 100000
+        fragmentability_packets.append(packet)
+    V4_DF_FRAGMENTATION_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in fragmentability_packets))
+
     def tcp_segment(dport, payload):
         tcp = bytearray(struct.pack(
             "!HHIIBBHHH", 12345, dport, 0, 0, 0x50, 2, 8192, 0, 0)
@@ -415,6 +444,16 @@ def main():
             "!H", tcp, 16,
             ipv6_transport_checksum(REMOTE_V6, LOCAL_V6, 6, tcp))
         return bytes(tcp)
+
+    threshold_packets = []
+    for index, (tcp_length, dport) in enumerate(((1240, 81), (1241, 82))):
+        packet = ipv6_extension_packet(
+            6, b"", tcp_segment(dport, bytes([42]) * (tcp_length - 20)),
+            1000000 + index * 100000)
+        threshold_packets.append(packet)
+    V6_DF_THRESHOLD_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in threshold_packets))
 
     def udp_segment(sport, dport, payload):
         udp = bytearray(struct.pack(
