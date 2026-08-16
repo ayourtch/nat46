@@ -1613,7 +1613,6 @@ static uint16_t nat46_fixup_icmp_dest_unreach(nat46_instance_t *nat46, struct ip
    */
 
   u32 *pptr6 = icmp6_parameter_ptr((struct icmp6hdr *)icmph);
-  u16 *pmtu = ((u16 *)icmph) + 3; /* IPv4-compatible MTU value is 16 bit */
 
   switch (icmph->code) {
     case 0:
@@ -1628,7 +1627,9 @@ static uint16_t nat46_fixup_icmp_dest_unreach(nat46_instance_t *nat46, struct ip
     case 3:
       icmph->code = 4;
       break;
-    case 4:
+    case 4: {
+      u32 advertised_mtu = ntohs(icmph->un.frag.mtu);
+
       /*
        * On adjusting the signaled MTU within packet:
        *
@@ -1650,10 +1651,14 @@ static uint16_t nat46_fixup_icmp_dest_unreach(nat46_instance_t *nat46, struct ip
        */
       icmph->type = 2;
       icmph->code = 0;
-      if (ntohs(*pmtu) < 1280) {
-        *pmtu = htons(1280);
+      if (advertised_mtu < 1280) {
+        advertised_mtu = 1280;
       }
+      /* Replace the complete ICMPv6 field so ICMPv4 reserved bits cannot
+       * become part of the translated MTU. */
+      *pptr6 = htonl(advertised_mtu);
       break;
+    }
     case 5:
     case 6:
     case 7:
