@@ -139,7 +139,7 @@ def serialize_layer(layer: dict) -> bytes:
     raise ValueError(f"unsupported layer {kind!r}")
 
 
-def validate(packet: dict) -> None:
+def serialized_network_packet(packet: dict):
     layers = packet["layers"]
     network_index = next(i for i, layer in enumerate(layers)
                          if layer["layertype"] in {"Ip", "Ipv6"})
@@ -156,20 +156,98 @@ def validate(packet: dict) -> None:
             "IPv4 header", chunks[0], 10, len(chunks[0])
         ))
 
-    transport_index = next(
-        (i for i in range(network_index + 1, len(layers))
-         if layers[i]["layertype"] in {"Tcp", "Udp", "Icmp", "Icmpv6"}),
-        None,
-    )
-    if transport_index is None:
-        return
-    offset = sum(len(serialize_layer(layer))
-                 for layer in layers[network_index:transport_index])
-    segment = packet_bytes[offset:]
-    transport = layers[transport_index]["layertype"]
+    return network, packet_bytes, packet_bytes[len(chunks[0]):]
+
+
+def ipv6_fragment(packet: dict):
+    network, _packet_bytes, payload = serialized_network_packet(packet)
+    if network["layertype"] != "Ipv6" or network["next_header"] != 44:
+        return None
+    if len(payload) < 8:
+        raise ValueError("truncated IPv6 fragment header")
+    protocol, reserved, fragment_field, identification = struct.unpack(
+        "!BBHI", payload[:8])
+    if reserved != 0 or fragment_field & 0x6:
+        raise ValueError("nonzero reserved IPv6 fragment bits")
+    return (network, protocol, identification, bool(fragment_field & 1),
+            payload[8:], fragment_field & 0xFFF8)
+
+
+def reassemble_ipv6_fragments(packet: dict, packets):
+    selected = ipv6_fragment(packet)
+    if selected is None:
+        raise ValueError("packet is not an IPv6 fragment")
+    network, protocol, identification, _more_fragments, _payload, _offset = selected
+    fragments = []
+    for candidate in packets:
+        parsed = ipv6_fragment(candidate)
+        if parsed is None:
+            continue
+        (candidate_network, candidate_protocol, candidate_identification,
+         more_fragments, payload, offset) = parsed
+        if (candidate.get("direction") != packet.get("direction")
+                or candidate_network["src"] != network["src"]
+                or candidate_network["dst"] != network["dst"]
+                or candidate_protocol != protocol
+                or candidate_identification != identification):
+            continue
+        if more_fragments and len(payload) % 8:
+            raise ValueError("non-final IPv6 fragment payload is not 8-byte aligned")
+        fragments.append((offset, more_fragments, payload))
+
+    fragments.sort(key=lambda fragment: fragment[0])
+    cursor = 0
+    final_seen = False
+    segment_parts = []
+    for offset, more_fragments, payload in fragments:
+        if final_seen:
+            raise ValueError("IPv6 fragment follows the final fragment")
+        if offset != cursor:
+            raise ValueError(
+                f"IPv6 fragment gap or overlap at offset {cursor}: got {offset}")
+        segment_parts.append(payload)
+        cursor += len(payload)
+        final_seen = not more_fragments
+    if not fragments or fragments[0][0] != 0 or not final_seen:
+        raise ValueError("incomplete IPv6 fragment set")
+
+    reassembled_network = dict(network)
+    reassembled_network["next_header"] = protocol
+    reassembled_network["payload_length"] = cursor
+    return reassembled_network, protocol, b"".join(segment_parts)
+
+
+def validate(packet: dict, packets) -> None:
+    network, packet_bytes, _network_payload = serialized_network_packet(packet)
+
+    if network["layertype"] == "Ipv6" and network["next_header"] == 44:
+        network, protocol, segment = reassemble_ipv6_fragments(packet, packets)
+        transport = {6: "Tcp", 17: "Udp"}.get(protocol)
+        if transport is None:
+            return
+    else:
+        layers = packet["layers"]
+        network_index = next(i for i, layer in enumerate(layers)
+                             if layer["layertype"] in {"Ip", "Ipv6"})
+
+        transport_index = next(
+            (i for i in range(network_index + 1, len(layers))
+             if layers[i]["layertype"] in {"Tcp", "Udp", "Icmp", "Icmpv6"}),
+            None,
+        )
+        if transport_index is None:
+            return
+        offset = sum(len(serialize_layer(layer))
+                     for layer in layers[network_index:transport_index])
+        segment = packet_bytes[offset:]
+        transport = layers[transport_index]["layertype"]
+
+    field_offsets = {"Tcp": 16, "Udp": 6, "Icmp": 2, "Icmpv6": 2}
+    if len(segment) < field_offsets[transport] + 2:
+        raise ValueError(f"truncated {transport} checksum field")
     checksum_length = len(segment)
     if transport == "Udp":
-        checksum_length = layers[transport_index]["len"]
+        checksum_length = struct.unpack_from("!H", segment, 4)[0]
         if checksum_length < 8 or checksum_length > len(segment):
             raise ValueError(f"invalid UDP length {checksum_length}")
         segment = segment[:checksum_length]
@@ -188,7 +266,6 @@ def validate(packet: dict) -> None:
                                       checksum_length))
         checked = pseudoheader + segment
     if checksum(checked) != 0:
-        field_offsets = {"Tcp": 16, "Udp": 6, "Icmp": 2, "Icmpv6": 2}
         checksum_offset = len(checked) - len(segment) + field_offsets[transport]
         raise ValueError(invalid_checksum_message(
             transport, checked, checksum_offset, checksum_length
@@ -209,7 +286,7 @@ def main() -> int:
             for packet_index, packet in enumerate(packets, 1):
                 if packet_matches(expected, packet):
                     try:
-                        validate(packet)
+                        validate(packet, packets)
                     except (KeyError, StopIteration, ValueError) as error:
                         raise ValueError(
                             f"check {check_index}, captured packet "

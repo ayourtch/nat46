@@ -25,6 +25,8 @@ UNMAPPABLE_QUOTE_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-unmappable/inject-tap0.jsonl")
 NONFIRST_FRAGMENT_FIXTURE = Path(
     "test-harness/tests/v4-frag-nonfirst-oob/inject-tap0.jsonl")
+FRAGMENT_CHECKSUM_FIXTURE = Path(
+    "test-harness/tests/v4-frag-transport-checksum/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -57,6 +59,13 @@ def udp_checksum(src, dst, sport, dport, payload):
                     + struct.pack("!I3xB", length, 17))
     udp = struct.pack("!HHHH", sport, dport, length, 0) + payload
     return checksum(pseudoheader + udp)
+
+
+def ipv4_transport_checksum(src, dst, protocol, segment):
+    pseudoheader = (ipaddress.IPv4Address(src).packed
+                    + ipaddress.IPv4Address(dst).packed
+                    + struct.pack("!BBH", 0, protocol, len(segment)))
+    return checksum(pseudoheader + segment)
 
 
 def ipv4_tcp_packet(src, dst, sport, dport, payload):
@@ -265,6 +274,43 @@ def main():
         fragment_payload)
     NONFIRST_FRAGMENT_FIXTURE.write_text(
         json.dumps(packet, separators=(",", ":")) + "\n")
+
+    tcp_payload = bytes(range(0x40, 0x54))
+    tcp_segment = bytearray(struct.pack(
+        "!HHIIBBHHH", 12345, 81, 0, 0, 0x50, 2, 8192, 0, 0)
+        + tcp_payload)
+    struct.pack_into(
+        "!H", tcp_segment, 16,
+        ipv4_transport_checksum(
+            "192.168.1.100", "8.8.8.8", 6, tcp_segment))
+
+    udp_payload = bytes(range(0x60, 0x78))
+    udp_segment = bytearray(
+        struct.pack("!HHHH", 53, 54, 8 + len(udp_payload), 0) + udp_payload)
+    struct.pack_into(
+        "!H", udp_segment, 6,
+        ipv4_transport_checksum(
+            "192.168.1.100", "8.8.8.8", 17, udp_segment))
+
+    fragments = (
+        ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 6, 0x3456, 0, True,
+            tcp_segment[:24]),
+        ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 6, 0x3456, 3, False,
+            tcp_segment[24:]),
+        ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 17, 0x789a, 0, True,
+            udp_segment[:16]),
+        ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 17, 0x789a, 2, False,
+            udp_segment[16:]),
+    )
+    for index, fragment in enumerate(fragments):
+        fragment["timestamp_us"] += index * 100000
+    FRAGMENT_CHECKSUM_FIXTURE.write_text("".join(
+        json.dumps(fragment, separators=(",", ":")) + "\n"
+        for fragment in fragments))
 
 
 if __name__ == "__main__":
