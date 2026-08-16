@@ -31,6 +31,8 @@ MAP_FRAGMENT_TCP_FIXTURE = Path(
     "test-harness/tests/v4-map-frag-tcp/inject-tap0.jsonl")
 V6_FRAGMENT_ID_FIXTURE = Path(
     "test-harness/tests/v6-frag-id/inject-tap0.jsonl")
+V6_EXTENSION_HEADERS_FIXTURE = Path(
+    "test-harness/tests/v6-extension-headers/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -63,6 +65,13 @@ def udp_checksum(src, dst, sport, dport, payload):
                     + struct.pack("!I3xB", length, 17))
     udp = struct.pack("!HHHH", sport, dport, length, 0) + payload
     return checksum(pseudoheader + udp)
+
+
+def ipv6_transport_checksum(src, dst, protocol, segment):
+    pseudoheader = (ipaddress.IPv6Address(src).packed
+                    + ipaddress.IPv6Address(dst).packed
+                    + struct.pack("!I3xB", len(segment), protocol))
+    return checksum(pseudoheader + segment)
 
 
 def ipv4_transport_checksum(src, dst, protocol, segment):
@@ -189,6 +198,32 @@ def ipv6_atomic_tcp_fragment_packet(identification, dport, timestamp_us):
                 "dst": LOCAL_V6,
             },
             {"layertype": "raw", "data": list(fragment + tcp)},
+        ],
+    }
+
+
+def ipv6_extension_packet(next_header, extension_headers, transport,
+                          timestamp_us):
+    payload = extension_headers + transport
+    return {
+        "timestamp_us": timestamp_us,
+        "layers": [
+            {
+                "layertype": "ether",
+                "dst": "0E:86:3C:CD:51:CA",
+                "src": "52:55:0A:00:02:02",
+                "etype": 34525,
+            },
+            {
+                "layertype": "Ipv6",
+                "version_class": 0x60000000,
+                "payload_length": len(payload),
+                "next_header": next_header,
+                "hop_limit": 64,
+                "src": REMOTE_V6,
+                "dst": LOCAL_V6,
+            },
+            {"layertype": "raw", "data": list(payload)},
         ],
     }
 
@@ -371,6 +406,44 @@ def main():
     V6_FRAGMENT_ID_FIXTURE.write_text("".join(
         json.dumps(fragment, separators=(",", ":")) + "\n"
         for fragment in v6_fragment_ids))
+
+    def tcp_segment(dport, payload):
+        tcp = bytearray(struct.pack(
+            "!HHIIBBHHH", 12345, dport, 0, 0, 0x50, 2, 8192, 0, 0)
+            + payload)
+        struct.pack_into(
+            "!H", tcp, 16,
+            ipv6_transport_checksum(REMOTE_V6, LOCAL_V6, 6, tcp))
+        return bytes(tcp)
+
+    def udp_segment(sport, dport, payload):
+        udp = bytearray(struct.pack(
+            "!HHHH", sport, dport, 8 + len(payload), 0) + payload)
+        struct.pack_into(
+            "!H", udp, 6,
+            ipv6_transport_checksum(REMOTE_V6, LOCAL_V6, 17, udp))
+        return bytes(udp)
+
+    extension_packets = (
+        ipv6_extension_packet(
+            0, struct.pack("!BB6x", 6, 0),
+            tcp_segment(81, bytes([0x41]) * 8), 1000000),
+        ipv6_extension_packet(
+            43, bytes([60, 1, 0, 0]) + bytes(12)
+            + struct.pack("!BB6x", 17, 0),
+            udp_segment(53, 54, bytes([0x42]) * 8), 1100000),
+        ipv6_extension_packet(
+            0, struct.pack("!BB6x", 60, 0)
+            + struct.pack("!BB14x", 6, 1),
+            tcp_segment(82, bytes([0x43]) * 8), 1200000),
+        ipv6_extension_packet(
+            44, struct.pack("!BBHI", 60, 0, 0, 0x12345678)
+            + struct.pack("!BB6x", 17, 0),
+            udp_segment(55, 56, bytes([0x44]) * 8), 1300000),
+    )
+    V6_EXTENSION_HEADERS_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in extension_packets))
 
 
 if __name__ == "__main__":

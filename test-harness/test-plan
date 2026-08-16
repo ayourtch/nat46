@@ -12,3 +12,4 @@ v4-frag-nonfirst-oob
 v4-frag-transport-checksum
 v4-map-frag-tcp
 v6-frag-id
+v6-extension-headers
