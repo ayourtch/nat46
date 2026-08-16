@@ -65,6 +65,12 @@ ICMP_EMBEDDED_FIXTURE = Path(
     "test-harness/tests/icmp-embedded-headers/inject-tap0.jsonl")
 ICMP_EMBEDDED_EXPECTED = Path(
     "test-harness/test-data/expected/icmp-embedded-headers.jsonl")
+ICMP_QUOTE_LIMIT_FIXTURE = Path(
+    "test-harness/tests/icmp-quote-output-limit/inject-tap0.jsonl")
+ICMP_QUOTE_LIMIT_REJECTED_FIXTURE = Path(
+    "test-harness/tests/icmp-quote-output-limit/inject-rejected-tap0.jsonl")
+ICMP_QUOTE_LIMIT_EXPECTED = Path(
+    "test-harness/test-data/expected/icmp-quote-output-limit.jsonl")
 
 
 def checksum(data):
@@ -137,10 +143,12 @@ def transport_segment(src, dst, protocol, sport, dport, payload):
 
 
 def ipv4_header(src, dst, protocol, payload_len, identification=0,
-                ttl=47):
+                ttl=47, fragment_offset=0, more_fragments=False):
+    fragment_field = (fragment_offset
+                      | (0x2000 if more_fragments else 0))
     header = bytearray(struct.pack(
         "!BBHHHBBH", 0x45, 0, 20 + payload_len, identification,
-        0, ttl, protocol, 0))
+        fragment_field, ttl, protocol, 0))
     header.extend(ipaddress.IPv4Address(src).packed)
     header.extend(ipaddress.IPv4Address(dst).packed)
     struct.pack_into("!H", header, 10, checksum(header))
@@ -150,7 +158,7 @@ def ipv4_header(src, dst, protocol, payload_len, identification=0,
 
 def icmpv4_error_packet(quoted_packet, timestamp_us, identification):
     message = bytearray(struct.pack("!BBHI", 3, 3, 0, 0) + quoted_packet)
-    struct.pack_into("!H", message, 2, checksum(message))
+    struct.pack_into("!H", message, 2, checksum(bytes(message)))
     packet = ipv4_fragment_packet(
         "192.168.1.100", "8.8.8.8", 1, identification, 0, False,
         message)
@@ -295,6 +303,96 @@ def generate_icmp_embedded_headers():
         + json.dumps({
             "expected_rx_count": 4,
             "checks": checks,
+        }, separators=(",", ":")) + "\n")
+
+
+def generate_icmp_quote_output_limit():
+    accepted_quote_len = 65499
+    rejected_quote_len = accepted_quote_len + 1
+    fragment_offset = 1
+
+    def quoted_fragment(quote_len, marker, identification):
+        payload = marker + bytes([0xa5]) * (quote_len - 20 - len(marker))
+        return (ipv4_header(
+            "8.8.8.8", "192.168.1.100", 6, len(payload),
+            identification=identification, fragment_offset=fragment_offset)
+                + payload)
+
+    accepted_quote = quoted_fragment(
+        accepted_quote_len, b"QUOTE-LIMIT-ACCEPTED:", 0x6100)
+    rejected_quote = quoted_fragment(
+        rejected_quote_len, b"QUOTE-LIMIT-REJECTED:", 0x6101)
+    packets = [
+        icmpv4_error_packet(
+            accepted_quote, 1000000, 0x7100),
+        icmpv4_error_packet(
+            rejected_quote, 1100000, 0x7101),
+    ]
+
+    accepted_inner_payload = accepted_quote[20:]
+    fragment_header = struct.pack(
+        "!BBHI", 6, 0, fragment_offset << 3, 0x6100)
+    translated_quote = (ipv6_header(
+        len(fragment_header) + len(accepted_inner_payload), 44,
+        REMOTE_V6, LOCAL_V6, hop_limit=47)
+                        + fragment_header + accepted_inner_payload)
+    translated_icmp = bytearray(
+        struct.pack("!BBHI", 1, 4, 0, 0) + translated_quote)
+    translated_checksum = icmpv6_checksum(
+        LOCAL_V6, REMOTE_V6, translated_icmp)
+    struct.pack_into("!H", translated_icmp, 2, translated_checksum)
+
+    assert len(accepted_quote) == 65499
+    assert len(packets[0]["layers"][2]["data"]) + 20 == 65527
+    assert len(rejected_quote) == 65500
+    assert len(packets[1]["layers"][2]["data"]) + 20 == 65528
+    assert len(translated_quote) == 65527
+    assert len(translated_icmp) == 65535
+    assert icmpv6_checksum(LOCAL_V6, REMOTE_V6, translated_icmp) == 0
+
+    max_fragment_payload = (65535 - 40 - 8) & ~7
+    fragment_payloads = (
+        bytes(translated_icmp[:max_fragment_payload]),
+        bytes(translated_icmp[max_fragment_payload:]),
+    )
+    fragment_fields = (1, max_fragment_payload)
+    fragment_checks = []
+    for fragment_payload, fragment_field in zip(
+            fragment_payloads, fragment_fields):
+        outer_fragment = (struct.pack(
+            "!BBHI", 58, 0, fragment_field, 0x7100)
+                          + fragment_payload)
+        fragment_checks.append({
+            "count": 1,
+            "packet": {
+                "direction": "rx",
+                "layers": [
+                    {
+                        "layertype": "Ipv6",
+                        "version_class": 0x60000000,
+                        "payload_length": len(outer_fragment),
+                        "next_header": 44,
+                        "hop_limit": 254,
+                        "src": LOCAL_V6,
+                        "dst": REMOTE_V6,
+                    },
+                    {
+                        "layertype": "raw",
+                        "data": list(outer_fragment),
+                    },
+                ],
+            },
+        })
+
+    ICMP_QUOTE_LIMIT_FIXTURE.write_text(
+        json.dumps(packets[0], separators=(",", ":")) + "\n")
+    ICMP_QUOTE_LIMIT_REJECTED_FIXTURE.write_text(
+        json.dumps(packets[1], separators=(",", ":")) + "\n")
+    ICMP_QUOTE_LIMIT_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": 2,
+            "checks": fragment_checks,
         }, separators=(",", ":")) + "\n")
 
 
@@ -565,6 +663,7 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 
 def main():
     generate_icmp_embedded_headers()
+    generate_icmp_quote_output_limit()
 
     rfc6052_prefixes = (
         (32, "2001:db8::/32"),
