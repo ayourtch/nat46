@@ -847,13 +847,13 @@ static void update_icmp6_type_code(nat46_instance_t *nat46, struct icmp6hdr *icm
 }
 
 
-static u16 get_next_ip_id(void) {
+static __be16 get_next_ip_id(void) {
   static u16 id = 0;
-  return id++;
+  return htons(id++);
 }
 
-static u16 fold_ipv6_frag_id(u32 v6id) {
-  return ((0xffff & (v6id >> 16)) ^ (v6id & 0xffff));
+static __be16 ipv6_frag_id_to_ipv4(__be32 v6id) {
+  return htons((u16)ntohl(v6id));
 }
 
 static void *add_offset(void *ptr, u16 offset) {
@@ -876,7 +876,7 @@ static void *get_next_header_ptr6(void *pv6, int v6_len) {
   return ret;
 }
 
-static void fill_v4hdr_from_v6hdr(struct iphdr * iph, struct ipv6hdr *ip6h, __u32 v4saddr, __u32 v4daddr, __u16 id, __u16 frag_off, __u16 proto, int l3_payload_len) {
+static void fill_v4hdr_from_v6hdr(struct iphdr * iph, struct ipv6hdr *ip6h, __u32 v4saddr, __u32 v4daddr, __be16 id, __u16 frag_off, __u16 proto, int l3_payload_len) {
   int tos = ip_tos_ignore ? 0 : ipv6_get_dsfield(ip6h);
   iph->ttl = ip6h->hop_limit;
   iph->saddr = v4saddr;
@@ -958,7 +958,7 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
   struct iphdr new_ipv4;
   struct iphdr *iph = &new_ipv4;
   u16 proto = ip6h->nexthdr;
-  u16 ipid = 0;
+  __be16 ipid = 0;
   u16 ipflags = htons(IP_DF);
   int infrag_payload_len = ntohs(ip6h->payload_len);
 
@@ -975,7 +975,7 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
     if(fh->frag_off == 0) {
       /* Atomic fragment */
       proto = fh->nexthdr;
-      ipid = fold_ipv6_frag_id(fh->identification);
+      ipid = ipv6_frag_id_to_ipv4(fh->identification);
       v6_len -= 8;
       infrag_payload_len -= 8;
       *ptailTruncSize += 8;
@@ -1598,7 +1598,7 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
   uint16_t proto;
   uint16_t frag_off;
-  uint16_t frag_id;
+  __be16 frag_id;
 
   struct iphdr * iph;
   __u32 v4saddr, v4daddr;
@@ -1642,14 +1642,14 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
       /* Atomic fragment */
       proto = fh->nexthdr;
       frag_off = 0; /* no DF bit */
-      frag_id = fold_ipv6_frag_id(fh->identification);
+      frag_id = ipv6_frag_id_to_ipv4(fh->identification);
       nat46debug(2, "Atomic fragment");
       check_for_l4 = 1;
     } else {
       if (0 == (ntohs(fh->frag_off) & IP6_OFFSET)) {
         /* First fragment. Pretend business as usual, but when creating IP, set the "MF" bit. */
         frag_off = htons(((ntohs(fh->frag_off) & 7) << 13) + (((ntohs(fh->frag_off) >> 3) & 0x1FFF)));
-        frag_id = fold_ipv6_frag_id(fh->identification);
+        frag_id = ipv6_frag_id_to_ipv4(fh->identification);
 	/* ntohs(fh->frag_off) & IP6_MF */
         proto = fh->nexthdr;
         check_for_l4 = 1;
@@ -1658,7 +1658,7 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
         /* Not the first fragment - leave as is, allow to translate IPv6->IPv4 */
         proto = fh->nexthdr;
         frag_off = htons(((ntohs(fh->frag_off) & 7) << 13) + (((ntohs(fh->frag_off) >> 3) & 0x1FFF)));
-        frag_id = fold_ipv6_frag_id(fh->identification);
+        frag_id = ipv6_frag_id_to_ipv4(fh->identification);
         nat46debug(2, "Not first fragment, frag_off: %04X, frag id: %04X orig frag_off: %04X", ntohs(frag_off), frag_id, ntohs(fh->frag_off));
       }
       if (NEXTHDR_ICMP == proto) {
