@@ -1662,6 +1662,16 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
     check_for_l4 = 1;
   }
 
+  /* ndo_start_xmit() may receive a cloned skb. The checksum and ICMP fixups
+   * below modify packet data in place (and xlate_payload6_to4 can move the
+   * embedded packet), so make the skb linear and privately writable after
+   * any reassembly and before the first mutation. */
+  if (skb_linearize_cow(old_skb)) {
+    nat46debug(0, "[nat46] Could not make v6 skb writable");
+    goto done;
+  }
+  ip6h = ipv6_hdr(old_skb);
+
   if(!pairs_xlate_v6_to_v4_outer(nat46, ip6h, proto, &v4saddr, &v4daddr)) {
     goto done;
   }
@@ -1999,6 +2009,15 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
       check_for_l4 = 1;
     }
   }
+
+  /* The L4 and ICMP fixups operate on old_skb before the translated skb is
+   * copied. Honor the ndo_start_xmit() cloning contract by making the packet
+   * linear and privately writable first. */
+  if (skb_linearize_cow(old_skb)) {
+    nat46debug(0, "[nat46] Could not make v4 skb writable");
+    goto done;
+  }
+  hdr4 = ip_hdr(old_skb);
 
   if (check_for_l4) {
     switch(hdr4->protocol) {
