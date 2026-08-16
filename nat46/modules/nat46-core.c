@@ -852,6 +852,30 @@ static __sum16 csum_tcpudp_remagic(__be32 saddr, __be32 daddr, u32 len,
   return csum;
 }
 
+/* Add an IPv6 upper-layer pseudo-header to an existing checksum. */
+static __sum16 csum_ipv6_remagic(const struct in6_addr *saddr,
+                                 const struct in6_addr *daddr, u32 len,
+                                 unsigned short proto, u16 csum) {
+  const u16 *pdata;
+  u16 len0, len1;
+  int i;
+
+  pdata = (const u16 *)saddr;
+  for (i = 0; i < 8; i++) {
+    csum = csum16_upd(csum, 0, *pdata++);
+  }
+  pdata = (const u16 *)daddr;
+  for (i = 0; i < 8; i++) {
+    csum = csum16_upd(csum, 0, *pdata++);
+  }
+  csum = csum16_upd(csum, 0, htons(proto));
+  len1 = htons((len >> 16) & 0xffff);
+  len0 = htons(len & 0xffff);
+  csum = csum16_upd(csum, 0, len1);
+  csum = csum16_upd(csum, 0, len0);
+  return csum;
+}
+
 /* Undo the IPv6 pseudoheader inclusion into the checksum */
 static __sum16 csum_ipv6_unmagic(nat46_instance_t *nat46, const struct in6_addr *saddr,
                         const struct in6_addr *daddr,
@@ -1506,7 +1530,7 @@ static uint16_t nat46_fixup_icmp_time_exceeded(nat46_instance_t *nat46, struct i
    * ICMP checksum both to take the type change into account and
    * to include the ICMPv6 pseudo-header.  The Code is unchanged.
    */
-  icmph->type = 3;
+  icmph->type = ICMPV6_TIME_EXCEED;
   return 0;
 }
 
@@ -1555,6 +1579,8 @@ static uint16_t nat46_fixup_icmp_parameterprob(nat46_instance_t *nat46, struct i
   u8 *icmp_pptr = icmp_parameter_ptr(icmph);
   u32 *icmp6_pptr = icmp6_parameter_ptr((struct icmp6hdr *)icmph);
   int new_pptr = -1;
+
+  icmph->type = ICMPV6_PARAMPROB;
   switch (icmph->code) {
     case 0:
     case 2:
@@ -1637,6 +1663,7 @@ static uint16_t nat46_fixup_icmp_dest_unreach(nat46_instance_t *nat46, struct ip
 
   u32 *pptr6 = icmp6_parameter_ptr((struct icmp6hdr *)icmph);
 
+  icmph->type = ICMPV6_DEST_UNREACH;
   switch (icmph->code) {
     case 0:
     case 1:
@@ -2270,6 +2297,272 @@ static int pairs_xlate_v4_to_v6_outer(nat46_instance_t *nat46, struct iphdr *hdr
   return 0;
 }
 
+static int pairs_xlate_v4_to_v6_inner(nat46_instance_t *nat46,
+                                      struct iphdr *hdr4, uint16_t *sport,
+                                      uint16_t *dport, void *v6saddr,
+                                      void *v6daddr) {
+  nat46_xlate_rulepair_t *apair = NULL;
+  int xlate_src = -1;
+  int xlate_dst = -1;
+  int ipair;
+
+  /* An ICMP error returns opposite to the earlier packet in its quote. */
+  for (ipair = 0; ipair < nat46->npairs; ipair++) {
+    apair = &nat46->pairs[ipair];
+
+    if (xlate_src == -1 &&
+        xlate_v4_to_v6(nat46, &apair->remote, &hdr4->saddr,
+                       v6saddr, sport)) {
+      xlate_src = ipair;
+    }
+    if (xlate_dst == -1 &&
+        xlate_v4_to_v6(nat46, &apair->local, &hdr4->daddr,
+                       v6daddr, dport)) {
+      xlate_dst = ipair;
+    }
+    if (xlate_src >= 0 && xlate_dst >= 0) {
+      break;
+    }
+    if (ipair + 1 < nat46->npairs && is_last_pair_in_group(apair)) {
+      xlate_src = -1;
+      xlate_dst = -1;
+    }
+  }
+
+  nat46debug(5, "[nat46] pairs_xlate_v4_to_v6_inner result: src %d dst %d",
+             xlate_src, xlate_dst);
+  return xlate_src >= 0 && xlate_dst >= 0;
+}
+
+/* Translate the IPv4 packet quoted by an ICMPv4 error. The embedded packet
+ * uses the reverse direction from the outer error and may be only partially
+ * present, so advertised lengths and physically available bytes stay
+ * separate throughout the translation. */
+static int xlate_payload4_to6(nat46_instance_t *nat46, struct sk_buff *skb,
+                              int outer_l3size, int outer_payload_len,
+                              int *pdelta) {
+  struct iphdr *outer_iph;
+  struct icmphdr *outer_icmph;
+  struct iphdr *inner_iph;
+  struct ipv6hdr inner_ip6;
+  struct frag_hdr inner_fh;
+  struct icmp6hdr translated_icmp6;
+  struct in6_addr v6saddr, v6daddr;
+  unsigned int old_skb_len = skb->len;
+  unsigned int move_len;
+  __sum16 translated_l4_csum = 0;
+  u16 sport = 0, dport = 0;
+  u16 inner_frag_off;
+  u16 inner_id;
+  u8 inner_proto;
+  u8 inner_ttl;
+  int inner_offset = outer_l3size + sizeof(struct icmphdr);
+  int inner_quoted_len = outer_payload_len - sizeof(struct icmphdr);
+  int inner_payload_len;
+  int inner_ihl;
+  int inner_tos;
+  int available_l4;
+  int new_header_len;
+  int delta;
+  bool add_frag_header;
+  bool first_fragment;
+  bool having_l4 = false;
+  bool update_l4_csum = false;
+  bool update_icmp6 = false;
+  void *inner_start;
+  void *old_l4;
+  void *new_l4;
+
+  if (outer_payload_len < (int)(sizeof(struct icmphdr) +
+                                sizeof(struct iphdr)) ||
+      inner_offset + (int)sizeof(struct iphdr) > old_skb_len) {
+    nat46debug(0, "[nat46] ICMPv4 error too short for inner IPv4 header");
+    return 0;
+  }
+
+  outer_iph = ip_hdr(skb);
+  outer_icmph = add_offset(outer_iph, outer_l3size);
+  inner_iph = (struct iphdr *)(outer_icmph + 1);
+  inner_ihl = inner_iph->ihl << 2;
+  if (inner_iph->version != 4 || inner_ihl < (int)sizeof(*inner_iph) ||
+      inner_ihl > inner_quoted_len ||
+      ntohs(inner_iph->tot_len) < inner_ihl ||
+      inner_offset + inner_ihl > old_skb_len) {
+    nat46debug(0, "[nat46] Invalid inner IPv4 packet in ICMPv4 error");
+    return 0;
+  }
+
+  inner_frag_off = inner_iph->frag_off;
+  inner_id = inner_iph->id;
+  inner_proto = inner_iph->protocol;
+  inner_ttl = inner_iph->ttl;
+  inner_tos = ip_tos_ignore ? 0 : ipv4_get_dsfield(inner_iph);
+  inner_payload_len = ntohs(inner_iph->tot_len) - inner_ihl;
+  available_l4 = inner_quoted_len - inner_ihl;
+  if (available_l4 > inner_payload_len) {
+    available_l4 = inner_payload_len;
+  }
+  old_l4 = add_offset(inner_iph, inner_ihl);
+  first_fragment = !(ntohs(inner_frag_off) & IP_OFFSET);
+  add_frag_header = !!(ntohs(inner_frag_off) & (IP_OFFSET | IP_MF));
+
+  if (inner_proto == IPPROTO_ICMP && add_frag_header) {
+    return 0;
+  }
+
+  if (first_fragment) {
+    switch (inner_proto) {
+      case IPPROTO_TCP:
+        if (available_l4 >= 4) {
+          struct tcphdr *th = old_l4;
+
+          sport = th->source;
+          dport = th->dest;
+          having_l4 = true;
+        }
+        break;
+      case IPPROTO_UDP:
+        if (available_l4 >= 4) {
+          struct udphdr *udp = old_l4;
+
+          sport = udp->source;
+          dport = udp->dest;
+          having_l4 = true;
+        }
+        break;
+      case IPPROTO_ICMP:
+        if (available_l4 < (int)sizeof(struct icmphdr)) {
+          return 0;
+        } else {
+          struct icmphdr *icmph = old_l4;
+
+          if (icmph->type != ICMP_ECHO && icmph->type != ICMP_ECHOREPLY) {
+            return 0;
+          }
+          sport = dport = icmph->un.echo.id;
+          having_l4 = true;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (!pairs_xlate_v4_to_v6_inner(nat46, inner_iph,
+                                   having_l4 ? &sport : NULL,
+                                   having_l4 ? &dport : NULL,
+                                   &v6saddr, &v6daddr)) {
+    return 0;
+  }
+
+  memset(&inner_ip6, 0, sizeof(inner_ip6));
+  *(__be32 *)&inner_ip6 = htonl(0x60000000 | (inner_tos << 20));
+  inner_ip6.payload_len = htons(inner_payload_len +
+                                (add_frag_header ? sizeof(inner_fh) : 0));
+  inner_ip6.nexthdr = add_frag_header ? NEXTHDR_FRAGMENT :
+                      (inner_proto == IPPROTO_ICMP ? NEXTHDR_ICMP :
+                       inner_proto);
+  inner_ip6.hop_limit = inner_ttl;
+  inner_ip6.saddr = v6saddr;
+  inner_ip6.daddr = v6daddr;
+
+  memset(&inner_fh, 0, sizeof(inner_fh));
+  if (add_frag_header) {
+    u16 fragment = ntohs(inner_frag_off);
+
+    inner_fh.nexthdr = inner_proto == IPPROTO_ICMP ? NEXTHDR_ICMP :
+                       inner_proto;
+    inner_fh.frag_off = htons(((fragment & IP_OFFSET) << 3) |
+                              ((fragment & IP_MF) ? IP6_MF : 0));
+    inner_fh.identification = htonl(ntohs(inner_id));
+  }
+
+  if (first_fragment) {
+    switch (inner_proto) {
+      case IPPROTO_TCP:
+        if (available_l4 >=
+            (int)(offsetof(struct tcphdr, check) + sizeof(__sum16))) {
+          struct tcphdr *th = old_l4;
+
+          translated_l4_csum = csum_v4_to_v6_addr(
+              th->check, inner_iph, &inner_ip6);
+          update_l4_csum = true;
+        }
+        break;
+      case IPPROTO_UDP:
+        if (available_l4 >= (int)sizeof(struct udphdr)) {
+          struct udphdr *udp = old_l4;
+
+          if (udp->check) {
+            translated_l4_csum = udp_csum_mangle_zero(
+                csum_v4_to_v6_addr(udp->check, inner_iph, &inner_ip6));
+            update_l4_csum = true;
+          } else if (!zero_csum_pass) {
+            return 0;
+          }
+        }
+        break;
+      case IPPROTO_ICMP: {
+        struct icmphdr *icmph = old_l4;
+
+        memcpy(&translated_icmp6, icmph, sizeof(translated_icmp6));
+        update_icmp6_type_code(
+            nat46, &translated_icmp6,
+            icmph->type == ICMP_ECHO ? ICMPV6_ECHO_REQUEST :
+                                       ICMPV6_ECHO_REPLY,
+            icmph->code);
+        translated_icmp6.icmp6_cksum = csum_ipv6_remagic(
+            &v6saddr, &v6daddr, inner_payload_len, NEXTHDR_ICMP,
+            translated_icmp6.icmp6_cksum);
+        update_icmp6 = true;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  new_header_len = sizeof(inner_ip6) +
+                   (add_frag_header ? sizeof(inner_fh) : 0);
+  delta = new_header_len - inner_ihl;
+  if (delta > 0 && pskb_expand_head(skb, 0, delta, GFP_ATOMIC)) {
+    nat46debug(0, "[nat46] Could not expand skb for inner IPv6 header");
+    return 0;
+  }
+  if (delta > 0) {
+    skb_put(skb, delta);
+  }
+
+  outer_iph = ip_hdr(skb);
+  inner_start = add_offset(outer_iph, inner_offset);
+  move_len = old_skb_len - inner_offset - inner_ihl;
+  memmove(add_offset(inner_start, new_header_len),
+          add_offset(inner_start, inner_ihl), move_len);
+  if (delta < 0) {
+    skb_trim(skb, old_skb_len - (unsigned int)(-delta));
+  }
+
+  memcpy(inner_start, &inner_ip6, sizeof(inner_ip6));
+  if (add_frag_header) {
+    memcpy(add_offset(inner_start, sizeof(inner_ip6)), &inner_fh,
+           sizeof(inner_fh));
+  }
+
+  new_l4 = add_offset(inner_start, new_header_len);
+  if (update_l4_csum) {
+    if (inner_proto == IPPROTO_TCP) {
+      ((struct tcphdr *)new_l4)->check = translated_l4_csum;
+    } else {
+      ((struct udphdr *)new_l4)->check = translated_l4_csum;
+    }
+  } else if (update_icmp6) {
+    memcpy(new_l4, &translated_icmp6, sizeof(translated_icmp6));
+  }
+
+  *pdelta = delta;
+  return 1;
+}
+
 
 int nat46_ipv4_input(struct sk_buff *old_skb) {
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
@@ -2288,6 +2581,7 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   int v6packet_l3size = 0;
   int header_delta = 0;
   int l4_payload_len = 0;
+  int xlate_inner_payload = 0;
   unsigned int ipv6_fragment_mtu = 0;
 
   struct ipv6hdr * hdr6;
@@ -2378,14 +2672,24 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
 	having_l4 = 1;
 	break;
 	}
-      case IPPROTO_ICMP:
+
+      case IPPROTO_ICMP: {
+	struct icmphdr *icmph;
 	if ((l4_payload_len < sizeof(struct icmphdr)) || (old_skb->len < v4packet_l3size + sizeof(struct icmphdr))) {
 	  nat46debug(0, "[nat46] Len short for ICMPv4 header");
 	  goto done;
 	}
+	icmph = add_offset(hdr4, v4packet_l3size);
+	xlate_inner_payload = icmph->type == ICMP_DEST_UNREACH ||
+	                      icmph->type == ICMP_TIME_EXCEEDED ||
+	                      icmph->type == ICMP_PARAMETERPROB;
 	sport = dport = nat46_fixup_icmp(nat46, hdr4, old_skb);
 	having_l4 = 1;
+	if (hdr4->protocol == NEXTHDR_NONE) {
+	  goto done;
+	}
 	break;
+      }
       default:
 	break;
     }
@@ -2402,6 +2706,18 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   if(!pairs_xlate_v4_to_v6_outer(nat46, hdr4, having_l4 ? &sport : NULL, having_l4 ? &dport : NULL, &v6saddr, &v6daddr)) {
     nat46debug(0, "[nat46] Could not translate v4->v6");
     goto done;
+  }
+
+  if (xlate_inner_payload) {
+    int inner_delta = 0;
+
+    if (!xlate_payload4_to6(nat46, old_skb, v4packet_l3size,
+                            l4_payload_len, &inner_delta)) {
+      nat46debug(0, "[nat46] Could not translate inner v4->v6 packet");
+      goto done;
+    }
+    l4_payload_len += inner_delta;
+    hdr4 = ip_hdr(old_skb);
   }
 
   if (!(ntohs(hdr4->frag_off) & IP_DF)) {
