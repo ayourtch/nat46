@@ -1797,7 +1797,9 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
   /* modify packet: actual IPv6->IPv4 transformation */
   truncSize = v6packet_l3size - sizeof(struct iphdr); /* chop first 20 bytes */
   skb_pull(new_skb, truncSize);
-  skb_put(new_skb, -tailTruncSize);
+  if (tailTruncSize > 0) {
+    skb_trim(new_skb, new_skb->len - tailTruncSize);
+  }
   l3_infrag_payload_len -= tailTruncSize;
   skb_reset_network_header(new_skb);
   skb_set_transport_header(new_skb,IPV4HDRSIZE); /* transport (TCP/UDP/ICMP/...) header starts after 20 bytes */
