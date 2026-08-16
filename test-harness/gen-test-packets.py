@@ -29,6 +29,8 @@ FRAGMENT_CHECKSUM_FIXTURE = Path(
     "test-harness/tests/v4-frag-transport-checksum/inject-tap0.jsonl")
 MAP_FRAGMENT_TCP_FIXTURE = Path(
     "test-harness/tests/v4-map-frag-tcp/inject-tap0.jsonl")
+V6_FRAGMENT_ID_FIXTURE = Path(
+    "test-harness/tests/v6-frag-id/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -160,6 +162,33 @@ def ipv4_fragment_packet(src, dst, protocol, identification,
                 "options": [],
             },
             {"layertype": "raw", "data": list(payload)},
+        ],
+    }
+
+
+def ipv6_atomic_tcp_fragment_packet(identification, dport, timestamp_us):
+    tcp = struct.pack(
+        "!HHIIBBHHH", 12345, dport, 0, 0, 0x50, 2, 8192, 0, 0)
+    fragment = struct.pack("!BBHI", 6, 0, 0, identification)
+    return {
+        "timestamp_us": timestamp_us,
+        "layers": [
+            {
+                "layertype": "ether",
+                "dst": "0E:86:3C:CD:51:CA",
+                "src": "52:55:0A:00:02:02",
+                "etype": 34525,
+            },
+            {
+                "layertype": "Ipv6",
+                "version_class": 0x60000000,
+                "payload_length": len(fragment) + len(tcp),
+                "next_header": 44,
+                "hop_limit": 64,
+                "src": REMOTE_V6,
+                "dst": LOCAL_V6,
+            },
+            {"layertype": "raw", "data": list(fragment + tcp)},
         ],
     }
 
@@ -334,6 +363,14 @@ def main():
     MAP_FRAGMENT_TCP_FIXTURE.write_text("".join(
         json.dumps(fragment, separators=(",", ":")) + "\n"
         for fragment in map_fragments))
+
+    v6_fragment_ids = (
+        ipv6_atomic_tcp_fragment_packet(0x12345678, 81, 1000000),
+        ipv6_atomic_tcp_fragment_packet(0x12349abc, 82, 1100000),
+    )
+    V6_FRAGMENT_ID_FIXTURE.write_text("".join(
+        json.dumps(fragment, separators=(",", ":")) + "\n"
+        for fragment in v6_fragment_ids))
 
 
 if __name__ == "__main__":

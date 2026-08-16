@@ -11,3 +11,4 @@ ipv6-quote-unmappable
 v4-frag-nonfirst-oob
 v4-frag-transport-checksum
 v4-map-frag-tcp
+v6-frag-id
