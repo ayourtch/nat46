@@ -1,0 +1,2 @@
+# packet assertion
+{"expected_rx_count":1,"checks":[{"count":1,"packet":{"direction":"rx","layers":[{"layertype":"Ipv6","version_class":1610612736,"payload_length":32,"next_header":44,"hop_limit":254,"src":"2001:db8:1:1::1","dst":"2001:4860:4860::8888"},{"layertype":"raw","data":[6,0,0,8,0,0,18,52,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,165,90,18,19,20,21,22,23]}]}}]}

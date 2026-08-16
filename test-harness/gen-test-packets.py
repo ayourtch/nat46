@@ -23,6 +23,8 @@ MAP_ADDRESS_WIDTH_FIXTURE = Path(
     "test-harness/tests/map-address-width/inject-tap0.jsonl")
 UNMAPPABLE_QUOTE_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-unmappable/inject-tap0.jsonl")
+NONFIRST_FRAGMENT_FIXTURE = Path(
+    "test-harness/tests/v4-frag-nonfirst-oob/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -102,6 +104,51 @@ def ipv4_tcp_packet(src, dst, sport, dport, payload):
                 "options": [],
             },
             {"layertype": "raw", "data": list(tcp + payload)},
+        ],
+    }
+
+
+def ipv4_fragment_packet(src, dst, protocol, identification,
+                         fragment_offset, more_fragments, payload):
+    total_length = 20 + len(payload)
+    fragment_field = fragment_offset | (0x2000 if more_fragments else 0)
+    ipv4 = bytearray(struct.pack(
+        "!BBHHHBBH", 0x45, 0, total_length, identification,
+        fragment_field, 255, protocol, 0))
+    ipv4.extend(ipaddress.IPv4Address(src).packed)
+    ipv4.extend(ipaddress.IPv4Address(dst).packed)
+    struct.pack_into("!H", ipv4, 10, checksum(ipv4))
+
+    return {
+        "timestamp_us": 1000000,
+        "layers": [
+            {
+                "layertype": "ether",
+                "dst": "0E:86:3C:CD:51:CA",
+                "src": "52:55:0A:00:02:02",
+                "etype": 2048,
+            },
+            {
+                "layertype": "Ip",
+                "version": 4,
+                "ihl": 5,
+                "tos": 0,
+                "len": total_length,
+                "id": identification,
+                "flags": {
+                    "reserved": False,
+                    "dont_fragment": False,
+                    "more_fragments": more_fragments,
+                    "fragment_offset": fragment_offset,
+                },
+                "ttl": 255,
+                "proto": protocol,
+                "chksum": struct.unpack_from("!H", ipv4, 10)[0],
+                "src": src,
+                "dst": dst,
+                "options": [],
+            },
+            {"layertype": "raw", "data": list(payload)},
         ],
     }
 
@@ -210,6 +257,14 @@ def main():
     quoted_packet = ipv6_header(
         0, 59, "2001:db8:9999::1", "2001:db8:8888::1")
     write_icmpv6_error_fixture(UNMAPPABLE_QUOTE_FIXTURE, quoted_packet)
+
+    fragment_payload = bytearray(range(24))
+    fragment_payload[16:18] = b"\xa5\x5a"
+    packet = ipv4_fragment_packet(
+        "192.168.1.100", "8.8.8.8", 6, 0x1234, 1, False,
+        fragment_payload)
+    NONFIRST_FRAGMENT_FIXTURE.write_text(
+        json.dumps(packet, separators=(",", ":")) + "\n")
 
 
 if __name__ == "__main__":
