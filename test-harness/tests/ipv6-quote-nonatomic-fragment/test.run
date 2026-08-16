@@ -1,0 +1,18 @@
+# Each injected ICMPv6 Destination Unreachable embeds a complete IPv6 Fragment
+# header. The first quote has offset 1 and M clear (frag_off 0x0008); the second
+# has offset zero and M set (frag_off 0x0001). Neither is an atomic fragment.
+# The invariant is zero matching translated IPv4 packets on nat46dev; capture
+# remains limited to that translator interface with its default ND filter.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+ip -6 route add 2001:db8:1:1::1/128 dev nat46dev
+echo config nat46dev debug 255 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/ipv6-quote-nonatomic-fragment.jsonl
+inject /mnt/host/test-harness/tests/ipv6-quote-nonatomic-fragment/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/ipv6-quote-nonatomic-fragment-inject.log
+capture stop all
+
+echo del nat46dev > /proc/net/nat46/control

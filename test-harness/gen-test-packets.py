@@ -21,6 +21,8 @@ ATOMIC_FRAGMENT_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-atomic-fragment/inject-tap0.jsonl")
 SMALL_ATOMIC_QUOTE_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-small-atomic-fragment/inject-tap0.jsonl")
+NONATOMIC_QUOTE_FIXTURE = Path(
+    "test-harness/tests/ipv6-quote-nonatomic-fragment/inject-tap0.jsonl")
 MAP_ADDRESS_WIDTH_FIXTURE = Path(
     "test-harness/tests/map-address-width/inject-tap0.jsonl")
 UNMAPPABLE_QUOTE_FIXTURE = Path(
@@ -305,6 +307,20 @@ def main():
                                  LOCAL_V6, REMOTE_V6)
                      + quoted_fragment)
     write_icmpv6_error_fixture(SMALL_ATOMIC_QUOTE_FIXTURE, quoted_packet)
+
+    nonatomic_packets = []
+    for index, (fragment_field, identification) in enumerate(
+            ((0x0008, 0x12345678), (0x0001, 0x9abcdef0))):
+        quoted_fragment = struct.pack(
+            "!BBHI", 59, 0, fragment_field, identification)
+        quoted_packet = (ipv6_header(len(quoted_fragment), 44,
+                                     LOCAL_V6, REMOTE_V6)
+                         + quoted_fragment)
+        nonatomic_packets.append(icmpv6_error_packet(
+            quoted_packet, timestamp_us=1000000 + index * 100000))
+    NONATOMIC_QUOTE_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in nonatomic_packets))
 
     partial_fragment = struct.pack("!BBH", 17, 0, 0)
     quoted_packet = (ipv6_header(8, 44, LOCAL_V6, REMOTE_V6)
