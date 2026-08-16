@@ -2058,7 +2058,7 @@ static void ip6_update_csum(struct sk_buff *skb, struct iphdr *ip4hdr,
       }
     case IPPROTO_UDP: {
       struct udphdr *udp = udp_hdr(skb);
-      unsigned udplen = l4_payload_len; /* UDP header + payload */
+      unsigned int udplen;
 
       if ((udp->check == 0) && zero_csum_pass) {
         /* zero checksum and the config to pass it is set - do nothing with it */
@@ -2070,6 +2070,8 @@ static void ip6_update_csum(struct sk_buff *skb, struct iphdr *ip4hdr,
         udp->check = csum_v4_to_v6_addr(oldsum, ip4hdr, ip6hdr);
         break;
       }
+      /* RFC 768 defines this length as the UDP header and data only. */
+      udplen = ntohs(udp->len);
       udp->check = 0;
 
       sum1 = csum_partial((char*)udp, udplen, 0); /* calculate checksum for UDP hdr+payload */
@@ -2340,6 +2342,13 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
 	  goto done;
 	}
 	udp = udp_hdr(old_skb);
+	if (!input_is_fragment &&
+	    (ntohs(udp->len) < sizeof(*udp) ||
+	     ntohs(udp->len) > l4_payload_len)) {
+	  nat46debug(0, "[nat46] Invalid v4 UDP length: %u",
+	             ntohs(udp->len));
+	  goto done;
+	}
 	sport = udp->source;
 	dport = udp->dest;
 	having_l4 = 1;
