@@ -861,6 +861,109 @@ static void *add_offset(void *ptr, u16 offset) {
 }
 
 
+static bool is_ipv6_xlate_header(u8 proto) {
+  return proto == NEXTHDR_HOP || proto == NEXTHDR_ROUTING ||
+         proto == NEXTHDR_DEST || proto == NEXTHDR_FRAGMENT;
+}
+
+/* Validate the extension chain that NAT46 supports, then use the kernel
+ * walker as the source of truth for the terminal protocol and offset. */
+static int walk_ipv6_xlate_headers(struct sk_buff *skb, u8 *proto,
+                                   int *header_len, int *fragment_offset,
+                                   struct frag_hdr *fragment) {
+  struct ipv6hdr *ip6h = ipv6_hdr(skb);
+  int network_offset = skb_network_offset(skb);
+  int packet_end = network_offset + sizeof(*ip6h) + ntohs(ip6h->payload_len);
+  int offset = network_offset + sizeof(*ip6h);
+  int walked_offset;
+  u8 next_header = ip6h->nexthdr;
+  u8 walked_proto = next_header;
+  __be16 walked_frag_off = 0;
+  __be16 chain_frag_off = 0;
+  bool nonfirst_fragment = false;
+
+  *fragment_offset = -1;
+  while (is_ipv6_xlate_header(next_header)) {
+    if (next_header == NEXTHDR_FRAGMENT) {
+      struct frag_hdr _fh;
+      struct frag_hdr *fh;
+
+      if (*fragment_offset >= 0 || packet_end - offset < sizeof(*fh)) {
+        return 0;
+      }
+      fh = skb_header_pointer(skb, offset, sizeof(_fh), &_fh);
+      if (!fh) {
+        return 0;
+      }
+      *fragment_offset = offset - network_offset;
+      *fragment = *fh;
+      chain_frag_off = fh->frag_off;
+      next_header = fh->nexthdr;
+      offset += sizeof(*fh);
+      if (ntohs(fh->frag_off) & IP6_OFFSET) {
+        nonfirst_fragment = true;
+        break;
+      }
+    } else {
+      struct ipv6_opt_hdr _ext;
+      struct ipv6_opt_hdr *ext;
+      int ext_len;
+
+      if (packet_end - offset < sizeof(*ext)) {
+        return 0;
+      }
+      ext = skb_header_pointer(skb, offset, sizeof(_ext), &_ext);
+      if (!ext) {
+        return 0;
+      }
+      ext_len = ipv6_optlen(ext);
+      if (ext_len > packet_end - offset) {
+        return 0;
+      }
+      if (next_header == NEXTHDR_ROUTING) {
+        struct ipv6_rt_hdr _rh;
+        struct ipv6_rt_hdr *rh;
+
+        rh = skb_header_pointer(skb, offset, sizeof(_rh), &_rh);
+        if (!rh || rh->segments_left != 0) {
+          return 0;
+        }
+      }
+      next_header = ext->nexthdr;
+      offset += ext_len;
+    }
+  }
+
+  if (ipv6_ext_hdr(next_header)) {
+    return 0;
+  }
+
+  walked_offset = ipv6_skip_exthdr(skb, network_offset + sizeof(*ip6h),
+                                   &walked_proto, &walked_frag_off);
+  if (walked_offset < 0) {
+    return 0;
+  }
+  if (nonfirst_fragment) {
+    if (walked_offset != network_offset + *fragment_offset ||
+        walked_proto != NEXTHDR_FRAGMENT ||
+        walked_frag_off != chain_frag_off) {
+      return 0;
+    }
+  } else {
+    if (walked_offset != offset || walked_proto != next_header ||
+        (*fragment_offset >= 0 && walked_frag_off != chain_frag_off)) {
+      return 0;
+    }
+    next_header = walked_proto;
+    offset = walked_offset;
+  }
+
+  *proto = next_header;
+  *header_len = offset - network_offset;
+  return 1;
+}
+
+
 /* FIXME: traverse the headers properly */
 static void *get_next_header_ptr6(void *pv6, int v6_len) {
   struct ipv6hdr *ip6h = pv6;
@@ -1596,7 +1699,7 @@ static int pairs_xlate_v6_to_v4_outer(nat46_instance_t *nat46, struct ipv6hdr *i
 int nat46_ipv6_input(struct sk_buff *old_skb) {
   struct ipv6hdr *ip6h = ipv6_hdr(old_skb);
   nat46_instance_t *nat46 = get_nat46_instance(old_skb);
-  uint16_t proto;
+  u8 proto;
   uint16_t frag_off;
   __be16 frag_id;
 
@@ -1609,6 +1712,8 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
   int v6packet_l3size = sizeof(*ip6h);
   int l3_infrag_payload_len = 0;
   int check_for_l4 = 0;
+  int fragment_offset = -1;
+  struct frag_hdr fragment;
 
   if (!nat46) {
     return err;
@@ -1622,25 +1727,21 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
   }
   nat46debug(5, "nat46_ipv6_input next hdr: %d, len: %d, is_fragment: %d",
                 ip6h->nexthdr, old_skb->len, ip6h->nexthdr == NEXTHDR_FRAGMENT);
-  l3_infrag_payload_len = ntohs(ip6h->payload_len);
-  proto = ip6h->nexthdr;
-  if (proto == NEXTHDR_FRAGMENT) {
-    struct frag_hdr *fh;
+  if (!walk_ipv6_xlate_headers(old_skb, &proto, &v6packet_l3size,
+                               &fragment_offset, &fragment)) {
+    nat46debug(0, "[nat46] Invalid or unsupported IPv6 extension header");
+    goto done;
+  }
+  l3_infrag_payload_len = ntohs(ip6h->payload_len) -
+                          (v6packet_l3size - sizeof(*ip6h));
+  if (fragment_offset >= 0) {
+    struct frag_hdr *fh = &fragment;
 
-    if ((l3_infrag_payload_len < sizeof(struct frag_hdr)) || (old_skb->len < v6packet_l3size + sizeof(struct frag_hdr))) {
-      nat46debug(0, "[nat46] Len short for Fragment header");
-      goto done;
-    }
-
-    fh = (struct frag_hdr*)(ip6h + 1);
-    v6packet_l3size += sizeof(struct frag_hdr);
-    l3_infrag_payload_len -= sizeof(struct frag_hdr);
     nat46debug(2, "Fragment ID: %08X", fh->identification);
-    nat46debug_dump(nat46, 6, fh, ntohs(ip6h->payload_len));
+    nat46debug_dump(nat46, 6, fh, sizeof(*fh));
 
     if(fh->frag_off == 0) {
       /* Atomic fragment */
-      proto = fh->nexthdr;
       frag_off = 0; /* no DF bit */
       frag_id = ipv6_frag_id_to_ipv4(fh->identification);
       nat46debug(2, "Atomic fragment");
@@ -1651,12 +1752,10 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
         frag_off = htons(((ntohs(fh->frag_off) & 7) << 13) + (((ntohs(fh->frag_off) >> 3) & 0x1FFF)));
         frag_id = ipv6_frag_id_to_ipv4(fh->identification);
 	/* ntohs(fh->frag_off) & IP6_MF */
-        proto = fh->nexthdr;
         check_for_l4 = 1;
         nat46debug(2, "First fragment, frag_off: %04X, frag id: %04X orig frag_off: %04X", ntohs(frag_off), frag_id, ntohs(fh->frag_off));
       } else {
         /* Not the first fragment - leave as is, allow to translate IPv6->IPv4 */
-        proto = fh->nexthdr;
         frag_off = htons(((ntohs(fh->frag_off) & 7) << 13) + (((ntohs(fh->frag_off) >> 3) & 0x1FFF)));
         frag_id = ipv6_frag_id_to_ipv4(fh->identification);
         nat46debug(2, "Not first fragment, frag_off: %04X, frag id: %04X orig frag_off: %04X", ntohs(frag_off), frag_id, ntohs(fh->frag_off));
@@ -1667,8 +1766,13 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
           goto done;
         }
         ip6h = ipv6_hdr(old_skb);
-        v6packet_l3size = sizeof(*ip6h);
-        l3_infrag_payload_len = ntohs(ip6h->payload_len);
+        if (!walk_ipv6_xlate_headers(old_skb, &proto, &v6packet_l3size,
+                                     &fragment_offset, &fragment) ||
+            fragment_offset >= 0) {
+          goto done;
+        }
+        l3_infrag_payload_len = ntohs(ip6h->payload_len) -
+                                (v6packet_l3size - sizeof(*ip6h));
         frag_off = 0; /* no DF bit */
         check_for_l4 = 1;
       }
