@@ -27,6 +27,8 @@ NONFIRST_FRAGMENT_FIXTURE = Path(
     "test-harness/tests/v4-frag-nonfirst-oob/inject-tap0.jsonl")
 FRAGMENT_CHECKSUM_FIXTURE = Path(
     "test-harness/tests/v4-frag-transport-checksum/inject-tap0.jsonl")
+MAP_FRAGMENT_TCP_FIXTURE = Path(
+    "test-harness/tests/v4-map-frag-tcp/inject-tap0.jsonl")
 
 
 def checksum(data):
@@ -311,6 +313,27 @@ def main():
     FRAGMENT_CHECKSUM_FIXTURE.write_text("".join(
         json.dumps(fragment, separators=(",", ":")) + "\n"
         for fragment in fragments))
+
+    map_tcp_payload = bytes([42]) * 20
+    map_tcp_segment = bytearray(struct.pack(
+        "!HHIIBBHHH", 12345, 81, 0, 0, 0x50, 2, 8192, 0, 0)
+        + map_tcp_payload)
+    struct.pack_into(
+        "!H", map_tcp_segment, 16,
+        ipv4_transport_checksum(
+            "192.168.1.100", "8.8.8.8", 6, map_tcp_segment))
+    map_fragments = (
+        ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 6, 0x4242, 0, True,
+            map_tcp_segment[:24]),
+        ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 6, 0x4242, 3, False,
+            map_tcp_segment[24:]),
+    )
+    map_fragments[1]["timestamp_us"] += 100000
+    MAP_FRAGMENT_TCP_FIXTURE.write_text("".join(
+        json.dumps(fragment, separators=(",", ":")) + "\n"
+        for fragment in map_fragments))
 
 
 if __name__ == "__main__":

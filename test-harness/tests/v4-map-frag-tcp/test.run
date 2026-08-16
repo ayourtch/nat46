@@ -1,0 +1,14 @@
+# A port-derived MAP address must be identical for every fragment of one TCP
+# datagram, so translate only after the complete transport header is available.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+echo config nat46dev debug 255 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.0/24 local.v6 2001:db8:1:1::/64 local.style MAP local.ea-len 16 local.psid-offset 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/v4-map-frag-tcp.jsonl
+inject /mnt/host/test-harness/tests/v4-map-frag-tcp/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/v4-map-frag-tcp-inject.log
+capture stop all
+
+echo del nat46dev > /proc/net/nat46/control
