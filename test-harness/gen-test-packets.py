@@ -57,6 +57,10 @@ UDP_ZERO_FIXTURE = Path(
     "test-harness/tests/udp-zero-checksum/inject-tap0.jsonl")
 UDP_ZERO_EXPECTED = Path(
     "test-harness/test-data/expected/udp-zero-checksum.jsonl")
+RFC6052_CANONICAL_FIXTURE = Path(
+    "test-harness/tests/rfc6052-canonical/inject-tap0.jsonl")
+RFC6052_CANONICAL_EXPECTED = Path(
+    "test-harness/test-data/expected/rfc6052-canonical.jsonl")
 
 
 def checksum(data):
@@ -287,6 +291,51 @@ def ipv6_extension_packet(next_header, extension_headers, transport,
     }
 
 
+def ipv6_tcp_packet(src, dst, sport, dport, timestamp_us):
+    tcp = bytearray(struct.pack(
+        "!HHIIBBHHH", sport, dport, 0, 0, 0x50, 2, 8192, 0, 0))
+    struct.pack_into(
+        "!H", tcp, 16,
+        ipv6_transport_checksum(src, dst, 6, tcp))
+    return {
+        "timestamp_us": timestamp_us,
+        "layers": [
+            {
+                "layertype": "ether",
+                "dst": "0E:86:3C:CD:51:CA",
+                "src": "52:55:0A:00:02:02",
+                "etype": 34525,
+            },
+            {
+                "layertype": "Ipv6",
+                "version_class": 0x60000000,
+                "payload_length": len(tcp),
+                "next_header": 6,
+                "hop_limit": 64,
+                "src": src,
+                "dst": dst,
+            },
+            {"layertype": "raw", "data": list(tcp)},
+        ],
+    }
+
+
+def rfc6052_address(prefix, ipv4):
+    network = ipaddress.IPv6Network(prefix)
+    ipv6 = bytearray(network.network_address.packed)
+    ipv4 = ipaddress.IPv4Address(ipv4).packed
+    prefix_length = network.prefixlen
+
+    if prefix_length == 96:
+        ipv6[12:16] = ipv4
+    else:
+        first_part = (64 - prefix_length) // 8
+        ipv6[prefix_length // 8:8] = ipv4[:first_part]
+        ipv6[9:9 + 4 - first_part] = ipv4[first_part:]
+
+    return ipv6
+
+
 def icmpv6_error_packet(quoted_packet, timestamp_us=1000000,
                         trailing_data=b"", icmp_type=1, icmp_code=0,
                         field=0):
@@ -326,6 +375,93 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 
 
 def main():
+    rfc6052_prefixes = (
+        (32, "2001:db8::/32"),
+        (40, "2001:db9:100::/40"),
+        (48, "2001:dba:2::/48"),
+        (56, "2001:dbb:3:400::/56"),
+        (64, "2001:dbc:4:5::/64"),
+        (96, "2001:dbd:5:6::/96"),
+    )
+    rfc6052_packets = []
+    rfc6052_checks = []
+    timestamp_us = 1000000
+
+    for prefix_length, prefix in rfc6052_prefixes:
+        valid = rfc6052_address(prefix, "8.8.8.8")
+        variants = [("valid", valid, 6000 + prefix_length, 1)]
+
+        invalid_u = bytearray(valid)
+        invalid_u[8] = 1
+        variants.append(("u", invalid_u, 6100 + prefix_length, 0))
+
+        if prefix_length != 96:
+            invalid_suffix = bytearray(valid)
+            invalid_suffix[15] = 1
+            variants.append(
+                ("suffix", invalid_suffix, 6200 + prefix_length, 0))
+
+        for _variant, address, dport, expected_outputs in variants:
+            source = str(ipaddress.IPv6Address(bytes(address)))
+            rfc6052_packets.append(ipv6_tcp_packet(
+                source, LOCAL_V6, 40000 + prefix_length, dport,
+                timestamp_us))
+            timestamp_us += 100000
+            rfc6052_checks.extend((
+                {
+                    "count": 1,
+                    "packet": {
+                        "direction": "tx",
+                        "valid_checksums": True,
+                        "layers": [
+                            {
+                                "layertype": "Ipv6",
+                                "src": source,
+                                "dst": LOCAL_V6,
+                                "next_header": 6,
+                            },
+                            {
+                                "layertype": "Tcp",
+                                "sport": 40000 + prefix_length,
+                                "dport": dport,
+                                "nonzero_fields": ["chksum"],
+                            },
+                        ],
+                    },
+                },
+                {
+                    "count": expected_outputs,
+                    "packet": {
+                        "direction": "rx",
+                        "valid_checksums": True,
+                        "layers": [
+                            {
+                                "layertype": "Ip",
+                                "src": "8.8.8.8",
+                                "dst": "192.168.1.100",
+                                "proto": 6,
+                            },
+                            {
+                                "layertype": "Tcp",
+                                "sport": 40000 + prefix_length,
+                                "dport": dport,
+                                "nonzero_fields": ["chksum"],
+                            },
+                        ],
+                    },
+                },
+            ))
+
+    RFC6052_CANONICAL_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in rfc6052_packets))
+    RFC6052_CANONICAL_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": len(rfc6052_prefixes),
+            "checks": rfc6052_checks,
+        }, separators=(",", ":")) + "\n")
+
     v4_to_v6_source, v4_to_v6_output = (
         udp_segment_for_zero_output_checksum(
             LOCAL_V6, REMOTE_V6,

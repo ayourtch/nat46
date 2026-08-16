@@ -1,0 +1,23 @@
+# RFC 6052 reserves the u octet and suffix of an IPv4-embedded IPv6
+# address.  Exercise every supported prefix length with an adjacent valid
+# control, changing only the reserved u octet or a suffix bit as applicable.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+ip -6 route add 2001:db8:1:1::1/128 dev nat46dev
+echo config nat46dev debug 255 > /proc/net/nat46/control
+
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 0.0.0.0/0 remote.v6 2001:db8::/32 remote.style RFC6052 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 0.0.0.0/0 remote.v6 2001:db9:100::/40 remote.style RFC6052 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 0.0.0.0/0 remote.v6 2001:dba:2::/48 remote.style RFC6052 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 0.0.0.0/0 remote.v6 2001:dbb:3:400::/56 remote.style RFC6052 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 0.0.0.0/0 remote.v6 2001:dbc:4:5::/64 remote.style RFC6052 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6:100::/96 remote.style RFC6052 > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/rfc6052-canonical.jsonl
+inject /mnt/host/test-harness/tests/rfc6052-canonical/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-canonical-inject.log
+capture stop all
+
+echo del nat46dev > /proc/net/nat46/control
