@@ -23,6 +23,8 @@ SMALL_ATOMIC_QUOTE_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-small-atomic-fragment/inject-tap0.jsonl")
 NONATOMIC_QUOTE_FIXTURE = Path(
     "test-harness/tests/ipv6-quote-nonatomic-fragment/inject-tap0.jsonl")
+ICMP_PARAMETER_POINTER_FIXTURE = Path(
+    "test-harness/tests/icmp-parameter-pointer-order/inject-tap0.jsonl")
 MAP_ADDRESS_WIDTH_FIXTURE = Path(
     "test-harness/tests/map-address-width/inject-tap0.jsonl")
 UNMAPPABLE_QUOTE_FIXTURE = Path(
@@ -240,8 +242,10 @@ def ipv6_extension_packet(next_header, extension_headers, transport,
 
 
 def icmpv6_error_packet(quoted_packet, timestamp_us=1000000,
-                        trailing_data=b""):
-    icmp = bytearray(bytes([1, 0, 0, 0, 0, 0, 0, 0]) + quoted_packet)
+                        trailing_data=b"", icmp_type=1, icmp_code=0,
+                        field=0):
+    icmp = bytearray(
+        struct.pack("!BBHI", icmp_type, icmp_code, 0, field) + quoted_packet)
     outer_src = REMOTE_V6
     outer_dst = LOCAL_V6
     struct.pack_into("!H", icmp, 2,
@@ -321,6 +325,23 @@ def main():
     NONATOMIC_QUOTE_FIXTURE.write_text("".join(
         json.dumps(packet, separators=(",", ":")) + "\n"
         for packet in nonatomic_packets))
+
+    parameter_quoted_icmp = bytearray(
+        bytes([128, 0, 0, 0, 0x12, 0x34, 0x56, 0x78]))
+    struct.pack_into(
+        "!H", parameter_quoted_icmp, 2,
+        icmpv6_checksum(LOCAL_V6, REMOTE_V6, parameter_quoted_icmp))
+    parameter_quoted_packet = (
+        ipv6_header(len(parameter_quoted_icmp), 58, LOCAL_V6, REMOTE_V6)
+        + parameter_quoted_icmp)
+    parameter_problem_packets = tuple(
+        icmpv6_error_packet(
+            parameter_quoted_packet, timestamp_us=1000000 + index * 100000,
+            icmp_type=4, icmp_code=code, field=6)
+        for index, code in enumerate((0, 1)))
+    ICMP_PARAMETER_POINTER_FIXTURE.write_text("".join(
+        json.dumps(packet, separators=(",", ":")) + "\n"
+        for packet in parameter_problem_packets))
 
     partial_fragment = struct.pack("!BBH", 17, 0, 0)
     quoted_packet = (ipv6_header(8, 44, LOCAL_V6, REMOTE_V6)
