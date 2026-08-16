@@ -18,6 +18,7 @@
 
 #include <linux/version.h>
 #include <net/route.h>
+#include <net/ip6_route.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0)
 #include <net/ipv6.h>
 #else
@@ -32,6 +33,31 @@
 #include "nat46-glue.h"
 #include "nat46-core.h"
 #include "nat46-module.h"
+
+static unsigned int lowest_ipv6_mtu = IPV6_MIN_MTU;
+module_param(lowest_ipv6_mtu, uint, 0644);
+MODULE_PARM_DESC(lowest_ipv6_mtu,
+                 "lowest IPv6 path MTU used for DF-clear IPv4 fragmentation");
+
+static unsigned int nat46_ipv6_path_mtu(struct net_device *dev,
+                                        const struct in6_addr *saddr,
+                                        const struct in6_addr *daddr)
+{
+  struct flowi6 fl6;
+  struct dst_entry *dst;
+  unsigned int mtu = max_t(unsigned int, lowest_ipv6_mtu, IPV6_MIN_MTU);
+
+  memset(&fl6, 0, sizeof(fl6));
+  fl6.saddr = *saddr;
+  fl6.daddr = *daddr;
+  dst = ip6_route_output(dev_net(dev), NULL, &fl6);
+  if (!dst->error) {
+    mtu = min(mtu, dst_mtu(dst));
+  }
+  dst_release(dst);
+
+  return max_t(unsigned int, mtu, IPV6_MIN_MTU);
+}
 
 static void
 nat46debug_dump(nat46_instance_t *nat46, int level, void *addr, int len)
@@ -1062,8 +1088,9 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
   struct iphdr *iph = &new_ipv4;
   u16 proto = ip6h->nexthdr;
   __be16 ipid = 0;
-  u16 ipflags = htons(IP_DF);
   int infrag_payload_len = ntohs(ip6h->payload_len);
+  u16 ipflags = htons(infrag_payload_len + sizeof(struct iphdr) > 1260 ?
+                      IP_DF : 0);
 
   /*
    * The packet is supposedly our own packet after translation - so the rules
@@ -1778,7 +1805,10 @@ int nat46_ipv6_input(struct sk_buff *old_skb) {
       }
     }
   } else {
-    frag_off = htons(IP_DF);
+    /* RFC 7915 section 5.1 preserves IPv4 fragmentability through 1260
+     * translated bytes and uses DF above that threshold for PMTUD. */
+    frag_off = htons(l3_infrag_payload_len + sizeof(struct iphdr) > 1260 ?
+                     IP_DF : 0);
     frag_id = get_next_ip_id();
     check_for_l4 = 1;
   }
@@ -1957,8 +1987,10 @@ done:
 
 
 
-static void ip6_update_csum(struct sk_buff * skb, struct iphdr * ip4hdr,
-                            struct ipv6hdr * ip6hdr, int do_atomic_frag)
+static void ip6_update_csum(struct sk_buff *skb, struct iphdr *ip4hdr,
+                            struct ipv6hdr *ip6hdr,
+                            unsigned int l4_payload_len,
+                            int input_is_fragment)
 {
   u32 sum1=0;
   u16 sum2=0;
@@ -1970,11 +2002,11 @@ static void ip6_update_csum(struct sk_buff * skb, struct iphdr * ip4hdr,
       unsigned tcplen = 0;
 
       oldsum = th->check;
-      if (do_atomic_frag) {
+      if (input_is_fragment) {
         th->check = csum_v4_to_v6_addr(oldsum, ip4hdr, ip6hdr);
         break;
       }
-      tcplen = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* TCP header + payload */
+      tcplen = l4_payload_len; /* TCP header + payload */
       th->check = 0;
       sum1 = csum_partial((char*)th, tcplen, 0); /* calculate checksum for TCP hdr+payload */
       sum2 = csum_ipv6_magic(&ip6hdr->saddr, &ip6hdr->daddr, tcplen, ip6hdr->nexthdr, sum1); /* add pseudoheader */
@@ -1983,7 +2015,7 @@ static void ip6_update_csum(struct sk_buff * skb, struct iphdr * ip4hdr,
       }
     case IPPROTO_UDP: {
       struct udphdr *udp = udp_hdr(skb);
-      unsigned udplen = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* UDP hdr + payload */
+      unsigned udplen = l4_payload_len; /* UDP header + payload */
 
       if ((udp->check == 0) && zero_csum_pass) {
         /* zero checksum and the config to pass it is set - do nothing with it */
@@ -1991,7 +2023,7 @@ static void ip6_update_csum(struct sk_buff * skb, struct iphdr * ip4hdr,
       }
 
       oldsum = udp->check;
-      if (do_atomic_frag) {
+      if (input_is_fragment) {
         udp->check = csum_v4_to_v6_addr(oldsum, ip4hdr, ip6hdr);
         break;
       }
@@ -2007,17 +2039,83 @@ static void ip6_update_csum(struct sk_buff * skb, struct iphdr * ip4hdr,
     case NEXTHDR_ICMP: {
       struct icmp6hdr *icmp6h = icmp6_hdr(skb);
       unsigned icmp6len = 0;
-      if (do_atomic_frag) {
+      if (input_is_fragment) {
         break;
       }
-      icmp6len = ntohs(ip6hdr->payload_len) - (do_atomic_frag?8:0); /* ICMP header + payload */
+      icmp6len = l4_payload_len; /* ICMP header + payload */
       icmp6h->icmp6_cksum = 0;
       sum1 = csum_partial((char*)icmp6h, icmp6len, 0); /* calculate checksum for TCP hdr+payload */
       sum2 = csum_ipv6_magic(&ip6hdr->saddr, &ip6hdr->daddr, icmp6len, ip6hdr->nexthdr, sum1); /* add pseudoheader */
       icmp6h->icmp6_cksum = sum2;
       break;
       }
+  }
+}
+
+/* Split a translated packet only after its full-datagram transport checksum
+ * has been updated. Each output carries an RFC 7915 IPv6 Fragment Header. */
+static int nat46_emit_ipv6_fragments(struct sk_buff *skb,
+                                     struct net_device *dev,
+                                     unsigned int mtu)
+{
+  struct sk_buff_head fragments;
+  struct ipv6hdr *template_ip6 = ipv6_hdr(skb);
+  struct frag_hdr *template_fh = (struct frag_hdr *)(template_ip6 + 1);
+  unsigned int header_len = sizeof(*template_ip6) + sizeof(*template_fh);
+  unsigned int payload_len = skb->len - header_len;
+  unsigned int max_payload = (mtu - header_len) & ~7U;
+  unsigned int offset = 0;
+  unsigned int base_offset = ntohs(template_fh->frag_off) & IP6_OFFSET;
+  int original_more = !!(ntohs(template_fh->frag_off) & IP6_MF);
+  struct sk_buff *fragment;
+
+  if (mtu < header_len + 8 || !max_payload) {
+    dev_kfree_skb_any(skb);
+    return 0;
+  }
+
+  skb_queue_head_init(&fragments);
+  while (offset < payload_len) {
+    unsigned int fragment_payload = min(max_payload, payload_len - offset);
+    unsigned int fragment_len = header_len + fragment_payload;
+    unsigned char *packet;
+    struct ipv6hdr *ip6h;
+    struct frag_hdr *fh;
+    int more = original_more || offset + fragment_payload < payload_len;
+
+    fragment = alloc_skb(LL_MAX_HEADER + fragment_len, GFP_ATOMIC);
+    if (!fragment) {
+      skb_queue_purge(&fragments);
+      dev_kfree_skb_any(skb);
+      return 0;
     }
+    skb_reserve(fragment, LL_MAX_HEADER);
+    packet = skb_put(fragment, fragment_len);
+    memcpy(packet, template_ip6, header_len);
+    memcpy(packet + header_len, skb_transport_header(skb) + offset,
+           fragment_payload);
+
+    fragment->dev = dev;
+    fragment->protocol = htons(ETH_P_IPV6);
+    fragment->ip_summed = CHECKSUM_NONE;
+    skb_reset_network_header(fragment);
+    skb_set_transport_header(fragment, header_len);
+
+    ip6h = ipv6_hdr(fragment);
+    fh = (struct frag_hdr *)(ip6h + 1);
+    ip6h->payload_len = htons(sizeof(*fh) + fragment_payload);
+    fh->frag_off = htons(((base_offset + offset) & IP6_OFFSET) |
+                         (more ? IP6_MF : 0));
+    __skb_queue_tail(&fragments, fragment);
+    offset += fragment_payload;
+  }
+
+  dev_kfree_skb_any(skb);
+  while ((fragment = __skb_dequeue(&fragments)) != NULL) {
+    nat46_netdev_count_xmit(fragment, dev);
+    netif_rx(fragment);
+  }
+  return 1;
 }
 
 static int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
@@ -2115,18 +2213,21 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   int check_for_l4 = 0;
   int having_l4 = 0;
   int add_frag_header = 0;
+  int input_is_fragment = 0;
+  int fragment_translated_packet = 0;
   int v4packet_l3size = 0;
   int v6packet_l3size = 0;
   int header_delta = 0;
   int l4_payload_len = 0;
+  unsigned int ipv6_fragment_mtu = 0;
 
   struct ipv6hdr * hdr6;
   struct iphdr * hdr4 = ip_hdr(old_skb);
 
-  char v6saddr[16], v6daddr[16];
+  struct in6_addr v6saddr, v6daddr;
 
-  memset(v6saddr, 1, 16);
-  memset(v6daddr, 2, 16);
+  memset(&v6saddr, 1, sizeof(v6saddr));
+  memset(&v6daddr, 2, sizeof(v6daddr));
 
   if (!nat46) {
     return err;
@@ -2138,6 +2239,7 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   nat46debug(5, "nat46_ipv4_input protocol: %d, len: %d, flags: %02x", hdr4->protocol, old_skb->len, IPCB(old_skb)->flags);
   v4packet_l3size = hdr4->ihl << 2;
   l4_payload_len = ntohs(hdr4->tot_len) - v4packet_l3size;
+  input_is_fragment = !!(ntohs(hdr4->frag_off) & 0x3fff);
   if(0 == (ntohs(hdr4->frag_off) & 0x3FFF) ) {
     check_for_l4 = 1;
   } else if (IPPROTO_ICMP == hdr4->protocol ||
@@ -2156,6 +2258,7 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
     hdr4 = ip_hdr(old_skb);
     v4packet_l3size = hdr4->ihl << 2;
     l4_payload_len = ntohs(hdr4->tot_len) - v4packet_l3size;
+    input_is_fragment = 0;
     check_for_l4 = 1;
   } else {
     add_frag_header = 1;
@@ -2220,9 +2323,21 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
     having_l4 = 1;
   }
 
-  if(!pairs_xlate_v4_to_v6_outer(nat46, hdr4, having_l4 ? &sport : NULL, having_l4 ? &dport : NULL, v6saddr, v6daddr)) {
+  if(!pairs_xlate_v4_to_v6_outer(nat46, hdr4, having_l4 ? &sport : NULL, having_l4 ? &dport : NULL, &v6saddr, &v6daddr)) {
     nat46debug(0, "[nat46] Could not translate v4->v6");
     goto done;
+  }
+
+  if (!(ntohs(hdr4->frag_off) & IP_DF)) {
+    unsigned int translated_len = IPV6HDRSIZE + l4_payload_len
+                                  + (add_frag_header ? 8 : 0);
+
+    ipv6_fragment_mtu = nat46_ipv6_path_mtu(
+        old_skb->dev, &v6saddr, &v6daddr);
+    if (translated_len > ipv6_fragment_mtu) {
+      add_frag_header = 1;
+      fragment_translated_packet = 1;
+    }
   }
 
   new_skb = skb_copy(old_skb, GFP_ATOMIC);
@@ -2267,8 +2382,8 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   hdr6->payload_len = htons(l4_payload_len + (add_frag_header?8:0));
   hdr6->nexthdr = hdr4->protocol;
   hdr6->hop_limit = hdr4->ttl;
-  memcpy(&hdr6->saddr, v6saddr, 16);
-  memcpy(&hdr6->daddr, v6daddr, 16);
+  hdr6->saddr = v6saddr;
+  hdr6->daddr = v6daddr;
 
   new_skb->protocol = htons(ETH_P_IPV6);
 
@@ -2279,14 +2394,18 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
     fh->identification = htonl(ntohs(hdr4->id));
   }
   if (check_for_l4) {
-    ip6_update_csum(new_skb, hdr4, hdr6, add_frag_header);
+    ip6_update_csum(new_skb, hdr4, hdr6, l4_payload_len,
+                    input_is_fragment);
   }
 
   hdr6->nexthdr = add_frag_header ? NEXTHDR_FRAGMENT : hdr4->protocol;
 
 
-  // FIXME: check if you can not fit the packet into the cached MTU
-  // if (dst_mtu(skb_dst(new_skb))==0) { }
+  if (fragment_translated_packet) {
+    nat46_emit_ipv6_fragments(new_skb, old_skb->dev,
+                              ipv6_fragment_mtu);
+    goto done;
+  }
 
   nat46debug(5, "about to send v6 packet, flags: %02x",  IP6CB(new_skb)->flags);
   nat46_netdev_count_xmit(new_skb, old_skb->dev);
