@@ -20,3 +20,4 @@ ipv6-quote-nonatomic-fragment
 icmp-parameter-pointer-order
 icmp-parameter-pointer-unmapped
 icmp-packet-too-big-mtu-width
+icmp-mtu-reserved-bits

@@ -29,6 +29,8 @@ ICMP_PARAMETER_POINTER_UNMAPPED_FIXTURE = Path(
     "test-harness/tests/icmp-parameter-pointer-unmapped/inject-tap0.jsonl")
 ICMP_PACKET_TOO_BIG_MTU_FIXTURE = Path(
     "test-harness/tests/icmp-packet-too-big-mtu-width/inject-tap0.jsonl")
+ICMP_MTU_RESERVED_BITS_FIXTURE = Path(
+    "test-harness/tests/icmp-mtu-reserved-bits/inject-tap0.jsonl")
 MAP_ADDRESS_WIDTH_FIXTURE = Path(
     "test-harness/tests/map-address-width/inject-tap0.jsonl")
 UNMAPPABLE_QUOTE_FIXTURE = Path(
@@ -346,6 +348,23 @@ def main():
     ICMP_PACKET_TOO_BIG_MTU_FIXTURE.write_text("".join(
         json.dumps(packet, separators=(",", ":")) + "\n"
         for packet in packet_too_big_packets))
+
+    quoted_ipv4 = bytearray(struct.pack(
+        "!BBHHHBBH", 0x45, 0, 40, 1, 0, 255, 6, 0))
+    quoted_ipv4.extend(ipaddress.IPv4Address("8.8.8.8").packed)
+    quoted_ipv4.extend(ipaddress.IPv4Address("192.168.1.100").packed)
+    struct.pack_into("!H", quoted_ipv4, 10, checksum(quoted_ipv4))
+    quoted_tcp = struct.pack(
+        "!HHIIBBHHH", 81, 12345, 0, 0, 0x50, 2, 8192, 0, 0)
+    icmp = bytearray(
+        struct.pack("!BBHBBH", 3, 4, 0, 0x12, 0, 1500)
+        + quoted_ipv4 + quoted_tcp)
+    struct.pack_into("!H", icmp, 2, checksum(icmp))
+    mtu_reserved_packet = ipv4_fragment_packet(
+        "192.168.1.100", "8.8.8.8", 1, 1, 0, False, icmp)
+    ICMP_MTU_RESERVED_BITS_FIXTURE.write_text(
+        json.dumps(mtu_reserved_packet, separators=(",", ":")) + "\n")
+
     parameter_problem_packets = tuple(
         icmpv6_error_packet(
             parameter_quoted_packet, timestamp_us=1000000 + index * 100000,

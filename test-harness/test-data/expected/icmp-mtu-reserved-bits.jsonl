@@ -1,0 +1,2 @@
+# packet assertion
+{"expected_rx_count":1,"checks":[{"count":1,"packet":{"direction":"rx","valid_checksums":true,"layers":[{"layertype":"Ipv6","src":"2001:db8:1:1::1","dst":"2001:4860:4860::8888","next_header":58},{"layertype":"Icmpv6","type_":2,"code":0,"nonzero_fields":["checksum"]},{"layertype":"icmpv6PacketTooBig","mtu":1500}]}}]}
