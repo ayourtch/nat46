@@ -674,10 +674,13 @@ static int xlate_map_v4_to_v6(nat46_instance_t *nat46, nat46_xlate_rule_t *rule,
   uint16_t l4id = pl4id ? *pl4id : 0;
   uint8_t psid_bits_len = rule->ea_len - (32 - rule->v4_pref_len);
   uint8_t v4_lsb_bits_len = 32 - rule->v4_pref_len;
+  u32 v4_mask = rule->v4_pref_len ?
+                (~0U << v4_lsb_bits_len) : 0;
 
   /* check that the ipv4 address is within the IPv4 map domain and reject if not */
 
-  if ( (ntohl(*pv4u32) & (0xffffffff << v4_lsb_bits_len)) != ntohl(rule->v4_pref) ) {
+  if ((ntohl(*pv4u32) & v4_mask) !=
+      (ntohl(rule->v4_pref) & v4_mask)) {
     nat46debug(5, "xlate_map_v4_to_v6: IPv4 address %pI4 outside of MAP domain %pI4/%d", pipv4, &rule->v4_pref, rule->v4_pref_len);
     return 0;
   }
