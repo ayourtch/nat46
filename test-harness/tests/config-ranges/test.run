@@ -1,0 +1,145 @@
+# Every rejected update starts from the same exact NONE rule.  Preserve both
+# sides of each update for byte comparison, then send a unique control packet
+# while that rule must still be active.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+capture start nat46dev /mnt/host/test-harness/test-data/captured/config-ranges.jsonl
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-01-v4-underflow-before.txt
+echo config nat46dev local.v4 192.168.1.100/-1 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-01-v4-underflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-01-v4-underflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-01-v4-underflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-02-v4-overflow-before.txt
+echo config nat46dev local.v4 192.168.1.100/33 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-02-v4-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-02-v4-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-02-v4-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-03-v4-conversion-overflow-before.txt
+echo config nat46dev local.v4 192.168.1.100/2147483648 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-03-v4-conversion-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-03-v4-conversion-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-03-v4-conversion-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-04-v6-underflow-before.txt
+echo config nat46dev local.v6 2001:db8:1:1::1/-1 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-04-v6-underflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-04-v6-underflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-04-v6-underflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-05-v6-overflow-before.txt
+echo config nat46dev local.v6 2001:db8:1:1::1/129 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-05-v6-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-05-v6-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-05-v6-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-06-v6-conversion-overflow-before.txt
+echo config nat46dev local.v6 2001:db8:1:1::1/2147483648 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-06-v6-conversion-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-06-v6-conversion-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-06-v6-conversion-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-07-ea-underflow-before.txt
+echo config nat46dev local.ea-len -1 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-07-ea-underflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-07-ea-underflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-07-ea-underflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-08-ea-overflow-before.txt
+echo config nat46dev local.ea-len 33 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-08-ea-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-08-ea-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-08-ea-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-09-ea-conversion-overflow-before.txt
+echo config nat46dev local.ea-len 2147483648 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-09-ea-conversion-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-09-ea-conversion-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-09-ea-conversion-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-10-psid-offset-underflow-before.txt
+echo config nat46dev local.psid-offset -1 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-10-psid-offset-underflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-10-psid-offset-underflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-10-psid-offset-underflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-11-psid-offset-overflow-before.txt
+echo config nat46dev local.psid-offset 16 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-11-psid-offset-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-11-psid-offset-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-11-psid-offset-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-12-psid-offset-conversion-overflow-before.txt
+echo config nat46dev local.psid-offset 2147483648 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-12-psid-offset-conversion-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-12-psid-offset-conversion-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-12-psid-offset-conversion-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-13-psid-length-underflow-before.txt
+echo config nat46dev local.v4 192.0.2.0/24 local.v6 2001:db8:10::/64 local.style MAP local.ea-len 7 local.psid-offset 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-13-psid-length-underflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-13-psid-length-underflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-13-psid-length-underflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-14-psid-length-overflow-before.txt
+echo config nat46dev local.v4 192.0.2.1/32 local.v6 2001:db8:20::/96 local.style MAP local.ea-len 17 local.psid-offset 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-14-psid-length-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-14-psid-length-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-14-psid-length-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-15-style-invalid-before.txt
+echo config nat46dev local.style INVALID > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-15-style-invalid-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-15-style-invalid.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-15-style-invalid.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-16-fmr-underflow-before.txt
+echo config nat46dev local.fmr-flag -1 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-16-fmr-underflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-16-fmr-underflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-16-fmr-underflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-17-fmr-overflow-before.txt
+echo config nat46dev local.fmr-flag 2 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-17-fmr-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-17-fmr-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-17-fmr-overflow.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-18-fmr-conversion-overflow-before.txt
+echo config nat46dev local.fmr-flag 2147483648 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-preserve-case-18-fmr-conversion-overflow-after.txt
+inject /mnt/host/test-harness/tests/config-ranges/inject-case-18-fmr-conversion-overflow.jsonl tap0 > /mnt/host/test-harness/test-data/captured/config-ranges-inject-case-18-fmr-conversion-overflow.log
+
+capture stop all
+echo del nat46dev > /proc/net/nat46/control
+
+# Accepted endpoint and style controls are isolated from packet processing.
+echo add range-low > /proc/net/nat46/control
+echo config range-low local.v4 0.0.0.0/0 local.v6 ::/0 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-accepted-lower.txt
+echo del range-low > /proc/net/nat46/control
+
+echo add range-high > /proc/net/nat46/control
+echo config range-high local.v4 192.0.2.1/32 local.v6 2001:db8:ff::1/128 local.style NONE local.ea-len 32 local.psid-offset 15 local.fmr-flag 1 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-accepted-upper.txt
+echo del range-high > /proc/net/nat46/control
+
+echo add range-rfc > /proc/net/nat46/control
+echo config range-rfc local.v4 0.0.0.0/0 local.v6 2001:db8:64::/96 local.style RFC6052 local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-accepted-rfc6052.txt
+echo del range-rfc > /proc/net/nat46/control
+
+echo add range-map0 > /proc/net/nat46/control
+echo config range-map0 local.v4 192.0.2.0/24 local.v6 2001:db8:70::/64 local.style MAP local.ea-len 8 local.psid-offset 15 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-accepted-map-psid-zero.txt
+echo del range-map0 > /proc/net/nat46/control
+
+echo add range-map16 > /proc/net/nat46/control
+echo config range-map16 local.v4 192.0.2.1/32 local.v6 2001:db8:80::/96 local.style MAP0 local.ea-len 16 local.psid-offset 0 local.fmr-flag 1 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/config-ranges-accepted-map0-psid-sixteen.txt
+echo del range-map16 > /proc/net/nat46/control

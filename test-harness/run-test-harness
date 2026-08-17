@@ -105,6 +105,10 @@ for test_name in "${SELECTED_TESTS[@]}"; do
   fi
   rm -f -- "test-data/captured/${test_name}.jsonl"
   rm -f -- "test-data/captured/${test_name}-inject.log"
+  find test-data/captured -maxdepth 1 -type f \
+    -name "${test_name}-inject-case-*.log" -delete
+  find test-data/captured -maxdepth 1 -type f \
+    -name "${test_name}-*.txt" -delete
   if [ -f "test-data/expected/${test_name}-config.txt" ]; then
     rm -f -- "test-data/captured/${test_name}-config.txt"
   fi

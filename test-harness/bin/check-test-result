@@ -12,6 +12,10 @@ rm -f /tmp/captured-config.txt
 EXPECTED_CONFIG=test-data/expected/${TESTNAME}-config.txt
 CAPTURED_CONFIG=test-data/captured/${TESTNAME}-config.txt
 check_config_snapshot() {
+  local expected_snapshot captured_snapshot first_before before after
+  local expected_pairs=0
+  local actual_pairs=0
+
   if [ -f "$EXPECTED_CONFIG" ]; then
     if [ ! -s "$CAPTURED_CONFIG" ]; then
       echo "FAIL: configuration snapshot is missing or empty for ${TESTNAME}" >&2
@@ -21,6 +25,45 @@ check_config_snapshot() {
     sed '/^$/d' "$CAPTURED_CONFIG" > /tmp/captured-config.txt
     diff -u /tmp/expected-config.txt /tmp/captured-config.txt
   fi
+
+  first_before=""
+  for before in test-data/captured/${TESTNAME}-preserve-*-before.txt; do
+    [ -e "$before" ] || continue
+    after=${before%-before.txt}-after.txt
+    if [ ! -s "$before" ] || [ ! -s "$after" ]; then
+      echo "FAIL: preservation snapshot pair is missing or empty for ${TESTNAME}" >&2
+      exit 1
+    fi
+    if ! cmp -s "$before" "$after"; then
+      echo "FAIL: rejected update changed configuration in ${before}" >&2
+      exit 1
+    fi
+    if [ -z "$first_before" ]; then
+      first_before=$before
+    elif ! cmp -s "$first_before" "$before"; then
+      echo "FAIL: preservation cases did not start from one baseline for ${TESTNAME}" >&2
+      exit 1
+    fi
+    actual_pairs=$((actual_pairs + 1))
+  done
+  for expected_snapshot in tests/${TESTNAME}/inject-case-*.jsonl; do
+    [ -e "$expected_snapshot" ] || continue
+    expected_pairs=$((expected_pairs + 1))
+  done
+  if [ "$actual_pairs" -ne "$expected_pairs" ]; then
+    echo "FAIL: expected ${expected_pairs} preservation pairs, found ${actual_pairs} for ${TESTNAME}" >&2
+    exit 1
+  fi
+
+  for expected_snapshot in test-data/expected/${TESTNAME}-accepted-*.txt; do
+    [ -e "$expected_snapshot" ] || continue
+    captured_snapshot=test-data/captured/$(basename "$expected_snapshot")
+    if [ ! -s "$captured_snapshot" ] ||
+       ! cmp -s "$expected_snapshot" "$captured_snapshot"; then
+      echo "FAIL: accepted endpoint snapshot mismatch for ${TESTNAME}: $(basename "$expected_snapshot")" >&2
+      exit 1
+    fi
+  done
 }
 
 # Predicate-based checks let security regressions assert only the relevant
@@ -41,6 +84,19 @@ if [ -f "$INJECTION_INPUT" ]; then
     exit 1
   fi
 fi
+for INJECTION_INPUT in tests/${TESTNAME}/inject-case-*.jsonl; do
+  [ -e "$INJECTION_INPUT" ] || continue
+  INJECTION_STEM=$(basename "$INJECTION_INPUT" .jsonl)
+  INJECTION_LOG=test-data/captured/${TESTNAME}-${INJECTION_STEM}.log
+  EXPECTED_INJECTIONS=$(awk 'NF { count++ } END { print count + 0 }' \
+    "$INJECTION_INPUT")
+  if [ ! -f "$INJECTION_LOG" ] ||
+     ! grep -Fqx "Injection complete: ${EXPECTED_INJECTIONS} packets sent" "$INJECTION_LOG"; then
+    echo "FAIL: expected ${EXPECTED_INJECTIONS} injection(s) from ${INJECTION_STEM} for ${TESTNAME}" >&2
+    cat "$INJECTION_LOG" >&2 2>/dev/null || true
+    exit 1
+  fi
+done
 
 if [ "$ASSERTION_KIND" = "# packet assertion" ]; then
   tail -n +2 test-data/expected/${TESTNAME}.jsonl > /tmp/packet-assertion.json

@@ -1,0 +1,3 @@
+add range-map16
+config range-map16 local.v4 192.0.2.1/32 local.v6 2001:db8:80::/96 local.style MAP0 local.ea-len 16 local.psid-offset 0 local.fmr-flag 1 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.
+

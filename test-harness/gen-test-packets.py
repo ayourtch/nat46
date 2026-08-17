@@ -87,6 +87,9 @@ QUOTED_ICMP_ECHO_CHECKSUM_FIXTURE = Path(
     "test-harness/tests/icmp-quote-echo-checksum/inject-tap0.jsonl")
 QUOTED_ICMP_ECHO_CHECKSUM_EXPECTED = Path(
     "test-harness/test-data/expected/icmp-quote-echo-checksum.jsonl")
+CONFIG_RANGES_DIR = Path("test-harness/tests/config-ranges")
+CONFIG_RANGES_EXPECTED = Path(
+    "test-harness/test-data/expected/config-ranges.jsonl")
 
 
 def checksum(data):
@@ -1299,6 +1302,167 @@ def ipv4_fragment_packet(src, dst, protocol, identification,
     }
 
 
+def generate_config_ranges():
+    cases = (
+        "v4-underflow",
+        "v4-overflow",
+        "v4-conversion-overflow",
+        "v6-underflow",
+        "v6-overflow",
+        "v6-conversion-overflow",
+        "ea-underflow",
+        "ea-overflow",
+        "ea-conversion-overflow",
+        "psid-offset-underflow",
+        "psid-offset-overflow",
+        "psid-offset-conversion-overflow",
+        "psid-length-underflow",
+        "psid-length-overflow",
+        "style-invalid",
+        "fmr-underflow",
+        "fmr-overflow",
+        "fmr-conversion-overflow",
+    )
+    CONFIG_RANGES_DIR.mkdir(parents=True, exist_ok=True)
+    for old_fixture in CONFIG_RANGES_DIR.glob("inject-case-*.jsonl"):
+        old_fixture.unlink()
+
+    checks = []
+    for index, case_name in enumerate(cases, start=1):
+        marker = f"RANGE-{index:02d}-OK".encode()
+        sport = 46000 + index
+        dport = 47000 + index
+        identification = 0xc100 + index
+        segment = transport_segment(
+            "192.168.1.100", "8.8.8.8", 17, sport, dport, marker)
+        packet = ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 17, identification,
+            0, False, segment)
+        fixture = (CONFIG_RANGES_DIR
+                   / f"inject-case-{index:02d}-{case_name}.jsonl")
+        fixture.write_text(
+            json.dumps(packet, separators=(",", ":")) + "\n")
+
+        translated_segment = bytearray(segment)
+        struct.pack_into("!H", translated_segment, 6, 0)
+        translated_checksum = ipv6_transport_checksum(
+            LOCAL_V6, REMOTE_V6, 17, translated_segment)
+        assert translated_checksum != 0
+        struct.pack_into(
+            "!H", translated_segment, 6, translated_checksum)
+        assert ipv6_transport_checksum(
+            LOCAL_V6, REMOTE_V6, 17, translated_segment) == 0
+
+        forwarded_header = ipv4_header(
+            "192.168.1.100", "8.8.8.8", 17, len(segment),
+            identification=identification, ttl=254)
+        source_checksum = struct.unpack_from("!H", segment, 6)[0]
+        checks.extend((
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip",
+                            "version": 4,
+                            "ihl": 5,
+                            "tos": 0,
+                            "len": 20 + len(segment),
+                            "id": identification,
+                            "ttl": 254,
+                            "proto": 17,
+                            "chksum": struct.unpack_from(
+                                "!H", forwarded_header, 10)[0],
+                            "src": "192.168.1.100",
+                            "dst": "8.8.8.8",
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Udp",
+                            "sport": sport,
+                            "dport": dport,
+                            "len": len(segment),
+                            "chksum": source_checksum,
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": list(marker),
+                        },
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": len(translated_segment),
+                            "next_header": 17,
+                            "hop_limit": 254,
+                            "src": LOCAL_V6,
+                            "dst": REMOTE_V6,
+                        },
+                        {
+                            "layertype": "Udp",
+                            "sport": sport,
+                            "dport": dport,
+                            "len": len(translated_segment),
+                            "chksum": translated_checksum,
+                        },
+                        {
+                            "layertype": "raw",
+                            "data_prefix": list(marker),
+                        },
+                    ],
+                },
+            },
+        ))
+
+    CONFIG_RANGES_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": len(cases),
+            "checks": checks,
+        }, separators=(",", ":")) + "\n")
+
+    accepted = (
+        ("lower", "range-low", "0.0.0.0", 0, "::", 0,
+         "NONE", 0, 0, 0),
+        ("upper", "range-high", "192.0.2.1", 32,
+         "2001:db8:ff::1", 128, "NONE", 32, 15, 1),
+        ("rfc6052", "range-rfc", "0.0.0.0", 0,
+         "2001:db8:64::", 96, "RFC6052", 0, 0, 0),
+        ("map-psid-zero", "range-map0", "192.0.2.0", 24,
+         "2001:db8:70::", 64, "MAP", 8, 15, 0),
+        ("map0-psid-sixteen", "range-map16", "192.0.2.1", 32,
+         "2001:db8:80::", 96, "MAP0", 16, 0, 1),
+    )
+    for (snapshot, device, v4, v4_len, v6, v6_len,
+         style, ea_len, psid_offset, fmr_flag) in accepted:
+        config = (
+            f"local.v4 {v4}/{v4_len} "
+            f"local.v6 {v6}/{v6_len} "
+            f"local.style {style} local.ea-len {ea_len} "
+            f"local.psid-offset {psid_offset} "
+            f"local.fmr-flag {fmr_flag} "
+            "remote.v4 8.8.8.8/32 "
+            "remote.v6 2001:4860:4860::8888/128 "
+            "remote.style NONE remote.ea-len 0 remote.psid-offset 0 "
+            "remote.fmr-flag 0 debug 0")
+        config = config[:199]
+        expected_path = Path(
+            f"test-harness/test-data/expected/"
+            f"config-ranges-accepted-{snapshot}.txt")
+        expected_path.write_text(
+            f"add {device}\nconfig {device} {config}\n\n")
+
+
 def ipv6_atomic_tcp_fragment_packet(identification, dport, timestamp_us):
     tcp = struct.pack(
         "!HHIIBBHHH", 12345, dport, 0, 0, 0x50, 2, 8192, 0, 0)
@@ -1436,6 +1600,7 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 
 
 def main():
+    generate_config_ranges()
     generate_icmp_embedded_headers()
     generate_icmp_quote_output_limit()
     generate_quoted_fragmented_icmp()
