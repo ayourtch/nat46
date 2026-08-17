@@ -262,8 +262,12 @@ int nat46_insert(struct net *net, char *devname, char *buf) {
 		nat46_instance_t *nat46 = netdev_nat46_instance(dev);
 		nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs+1, nat46, 0, 1, -1);
 		if(nat46_new) {
-			netdev_nat46_set_instance(dev, nat46_new);
 			ret = nat46_set_ipair_config(nat46_new, 0, buf, strlen(buf));
+			if (0 == ret) {
+				netdev_nat46_set_instance(dev, nat46_new);
+			} else {
+				release_nat46_instance(nat46_new);
+			}
 		} else {
 			pr_err("Could not insert a new rule on device %s\n", devname);
 		}
@@ -275,7 +279,17 @@ int nat46_configure(struct net *net, char *devname, char *buf) {
 	struct net_device *dev = find_dev(net, devname);
 	if(dev) {
 		nat46_instance_t *nat46 = netdev_nat46_instance(dev);
-		return nat46_set_config(nat46, buf, strlen(buf));
+		nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs, nat46, 0, 0, -1);
+		int ret = -1;
+		if(nat46_new) {
+			ret = nat46_set_config(nat46_new, buf, strlen(buf));
+			if (0 == ret) {
+				netdev_nat46_set_instance(dev, nat46_new);
+			} else {
+				release_nat46_instance(nat46_new);
+			}
+		}
+		return ret;
 	} else {
 		return -1;
 	}
