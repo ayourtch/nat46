@@ -349,36 +349,102 @@ int nat46_remove(struct net *net, char *devname, char *buf) {
 }
 
 void nat64_show_all_configs(struct net *net, struct seq_file *m) {
-        struct net_device *dev;
+	struct nat46_config_snapshot {
+		char devname[IFNAMSIZ];
+		nat46_instance_t *nat46;
+	};
+	struct nat46_config_snapshot *snapshots = NULL;
+	struct net_device *dev;
+	char dummy;
+	char *buf = NULL;
+	size_t snapshot_capacity = 0;
+	size_t snapshot_count = 0;
+	int max_config_len = 0;
+	size_t snapshot;
+	int ipair;
+
+	/* First count devices so all sleeping allocations happen without the
+	 * device-list lock held. If the device set grows between passes, entries
+	 * beyond this capacity belong to the next proc snapshot; removed devices
+	 * are simply absent below. */
 	dev_lock_list();
 	dev = first_net_device(net);
 	while (dev) {
+		if(is_nat46(dev))
+			snapshot_capacity++;
+		dev = next_net_device(dev);
+	}
+	dev_unlock_list();
+
+	if (!snapshot_capacity)
+		return;
+
+	snapshots = kcalloc(snapshot_capacity, sizeof(*snapshots), GFP_KERNEL);
+	if (!snapshots)
+		return;
+
+	/* Pin each immutable configuration while still holding the device-list
+	 * lock, and copy the stable device name. Configuration swaps can then
+	 * proceed while this proc snapshot is sized and formatted. */
+	dev_lock_list();
+	dev = first_net_device(net);
+	while (dev && snapshot_count < snapshot_capacity) {
 		if(is_nat46(dev)) {
-			nat46_instance_t *nat46 = netdev_nat46_instance(dev);
-			int ipair = -1;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
-			char *buf = kmalloc(NAT46_CFG_BUFLEN + 1, GFP_ATOMIC);
-#else
-			char *buf = kmalloc(NAT46_CFG_BUFLEN + 1, GFP_KERNEL);
-#endif
-			seq_printf(m, "add %s\n", dev->name);
-			if(buf) {
-				for(ipair = 0; ipair < nat46->npairs; ipair++) {
-					nat46_get_ipair_config(nat46, ipair, buf, NAT46_CFG_BUFLEN);
-					if(ipair < nat46->npairs-1) {
-						seq_printf(m,"insert %s %s\n", dev->name, buf);
-					} else {
-						seq_printf(m,"config %s %s\n", dev->name, buf);
-					}
-				}
-				seq_printf(m,"\n");
-				kfree(buf);
+			nat46_instance_t *nat46 = get_nat46_instance_dev(dev);
+
+			if (nat46) {
+				memcpy(snapshots[snapshot_count].devname,
+				       dev->name, IFNAMSIZ);
+				snapshots[snapshot_count].devname[IFNAMSIZ - 1] = '\0';
+				snapshots[snapshot_count].nat46 = nat46;
+				snapshot_count++;
 			}
 		}
 		dev = next_net_device(dev);
 	}
 	dev_unlock_list();
 
+	/* snprintf returns the required length when the supplied size is zero.
+	 * Measure every rule in the stable snapshots, then allocate one reusable
+	 * buffer large enough for the longest complete record. */
+	for (snapshot = 0; snapshot < snapshot_count; snapshot++) {
+		nat46_instance_t *nat46 = snapshots[snapshot].nat46;
+
+		for (ipair = 0; ipair < nat46->npairs; ipair++) {
+			int len = nat46_get_ipair_config(nat46, ipair, &dummy, 0);
+
+			if (len > max_config_len)
+				max_config_len = len;
+		}
+	}
+	buf = kmalloc((size_t)max_config_len + 1, GFP_KERNEL);
+	if (!buf)
+		goto release_snapshots;
+
+	for (snapshot = 0; snapshot < snapshot_count; snapshot++) {
+		nat46_instance_t *nat46 = snapshots[snapshot].nat46;
+		const char *devname = snapshots[snapshot].devname;
+
+		seq_printf(m, "add %s\n", devname);
+		for (ipair = 0; ipair < nat46->npairs; ipair++) {
+			int len = nat46_get_ipair_config(
+				nat46, ipair, buf, max_config_len + 1);
+
+			if (len < 0 || len > max_config_len)
+				continue;
+			if(ipair < nat46->npairs-1)
+				seq_printf(m,"insert %s %s\n", devname, buf);
+			else
+				seq_printf(m,"config %s %s\n", devname, buf);
+		}
+		seq_printf(m,"\n");
+	}
+
+	kfree(buf);
+release_snapshots:
+	for (snapshot = 0; snapshot < snapshot_count; snapshot++)
+		release_nat46_instance(snapshots[snapshot].nat46);
+	kfree(snapshots);
 }
 
 void nat46_destroy_all(struct net *net) {

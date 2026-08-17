@@ -67,6 +67,21 @@ nat46_instance_t *get_nat46_instance(struct sk_buff *sk) {
   }
 }
 
+nat46_instance_t *get_nat46_instance_dev(struct net_device *dev) {
+  nat46_instance_t *nat46;
+
+  spin_lock_bh(&ref_lock);
+  nat46 = netdev_nat46_instance(dev);
+  if (is_valid_nat46(nat46)) {
+    nat46->refcount++;
+    spin_unlock_bh(&ref_lock);
+    return nat46;
+  }
+  spin_unlock_bh(&ref_lock);
+  pr_err("[nat46] get_nat46_instance_dev: Could not find a valid NAT46 instance!\n");
+  return NULL;
+}
+
 /* Atomically swap the instance pointer in *slot to new_nat46 and return the old
  * value. The swap is done under ref_lock so it is fully synchronized with the
  * unlocked-read-free get_nat46_instance() path (review2 Issue 3): the caller
