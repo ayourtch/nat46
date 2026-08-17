@@ -1,0 +1,3 @@
+add nat46dev
+config nat46dev local.v4 198.255.254.253/32 local.v6 2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff/64 local.style RFC6052 local.ea-len 32 local.psid-offset 15 local.fmr-flag 1 remote.v4 198.255.254.254/32 remote.v6 2001:ffff:ffff:fffe:ffff:ffff:ffff:fffe/64 remote.style RFC6052 remote.ea-len 32 remote.psid-offset 15 remote.fmr-flag 1 debug -2147483648
+

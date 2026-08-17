@@ -106,6 +106,11 @@ REMOVE_SEMANTIC_RULE_EXPECTED = Path(
     "test-harness/test-data/expected/remove-semantic-rule.jsonl")
 REMOVE_SEMANTIC_RULE_CONFIG_EXPECTED = Path(
     "test-harness/test-data/expected/remove-semantic-rule-config.txt")
+PROC_CONFIG_LONG_DIR = Path("test-harness/tests/proc-config-long")
+PROC_CONFIG_LONG_EXPECTED = Path(
+    "test-harness/test-data/expected/proc-config-long.jsonl")
+PROC_CONFIG_LONG_CONFIG_EXPECTED = Path(
+    "test-harness/test-data/expected/proc-config-long-config.txt")
 
 
 def checksum(data):
@@ -1810,6 +1815,142 @@ def generate_remove_semantic_rule():
         f"config nat46dev {empty_rule[:199]}\n\n")
 
 
+def generate_proc_config_long():
+    local_v4 = "198.255.254.253"
+    remote_v4 = "198.255.254.254"
+    local_prefix = "2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
+    remote_prefix = "2001:ffff:ffff:fffe:ffff:ffff:ffff:fffe"
+    local_network = "2001:ffff:ffff:ffff::/64"
+    remote_network = "2001:ffff:ffff:fffe::/64"
+    local_v6 = str(ipaddress.IPv6Address(
+        bytes(rfc6052_address(local_network, local_v4))))
+    remote_v6 = str(ipaddress.IPv6Address(
+        bytes(rfc6052_address(remote_network, remote_v4))))
+    rule = (
+        f"local.v4 {local_v4}/32 local.v6 {local_prefix}/64 "
+        "local.style RFC6052 local.ea-len 32 local.psid-offset 15 "
+        "local.fmr-flag 1 "
+        f"remote.v4 {remote_v4}/32 remote.v6 {remote_prefix}/64 "
+        "remote.style RFC6052 remote.ea-len 32 remote.psid-offset 15 "
+        "remote.fmr-flag 1 debug -2147483648")
+    expected_config = f"add nat46dev\nconfig nat46dev {rule}\n\n"
+    assert len(rule) == 331
+    assert len(expected_config) == 362
+    assert expected_config.index("debug -2147483648") == 343
+    assert [index for index, value in enumerate(expected_config)
+            if value == "\n"] == [12, 360, 361]
+    assert len(rule[:199]) == 199
+    assert len("add nat46dev\nconfig nat46dev " + rule[:199] + "\n\n") == 230
+
+    marker = b"PROC-LONG-CFG37"
+    sport = 63701
+    dport = 64701
+    fragment_id = 0x5e25c601
+    segment = transport_segment(
+        remote_v6, local_v6, 17, sport, dport, marker)
+    assert struct.unpack_from("!H", segment, 6)[0] != 0
+    fragment_header = struct.pack("!BBHI", 17, 0, 0, fragment_id)
+    fixture = {
+        "timestamp_us": 1400000,
+        "layers": [
+            {
+                "layertype": "ether",
+                "dst": "0E:86:3C:CD:51:CA",
+                "src": "52:55:0A:00:02:02",
+                "etype": 34525,
+            },
+            {
+                "layertype": "Ipv6",
+                "version_class": 0x60000000,
+                "payload_length": len(fragment_header) + len(segment),
+                "next_header": 44,
+                "hop_limit": 64,
+                "src": remote_v6,
+                "dst": local_v6,
+            },
+            {"layertype": "raw",
+             "data": list(fragment_header + segment)},
+        ],
+    }
+
+    output_segment = bytearray(segment)
+    struct.pack_into("!H", output_segment, 6, 0)
+    output_checksum = ipv4_transport_checksum(
+        remote_v4, local_v4, 17, output_segment)
+    assert output_checksum != 0
+    struct.pack_into("!H", output_segment, 6, output_checksum)
+    assert ipv4_transport_checksum(
+        remote_v4, local_v4, 17, output_segment) == 0
+    output_id = fragment_id & 0xffff
+    output_header = ipv4_header(
+        remote_v4, local_v4, 17, len(output_segment),
+        identification=output_id, ttl=63)
+
+    PROC_CONFIG_LONG_DIR.mkdir(parents=True, exist_ok=True)
+    (PROC_CONFIG_LONG_DIR / "inject-tap0.jsonl").write_text(
+        json.dumps(fixture, separators=(",", ":")) + "\n")
+    PROC_CONFIG_LONG_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": 1,
+            "checks": [
+                {
+                    "count": 1,
+                    "packet": {
+                        "direction": "tx", "valid_checksums": True,
+                        "layers": [
+                            {
+                                "layertype": "Ipv6",
+                                "version_class": 0x60000000,
+                                "payload_length": (len(fragment_header)
+                                                   + len(segment)),
+                                "next_header": 44, "hop_limit": 63,
+                                "src": remote_v6, "dst": local_v6,
+                            },
+                            {"layertype": "raw",
+                             "data_prefix": list(
+                                 fragment_header + segment)},
+                        ],
+                    },
+                },
+                {
+                    "count": 1,
+                    "packet": {
+                        "direction": "rx", "valid_checksums": True,
+                        "layers": [
+                            {
+                                "layertype": "Ip", "version": 4,
+                                "ihl": 5, "tos": 0,
+                                "len": 20 + len(output_segment),
+                                "id": output_id,
+                                "flags": {
+                                    "reserved": False,
+                                    "dont_fragment": False,
+                                    "more_fragments": False,
+                                    "fragment_offset": 0,
+                                },
+                                "ttl": 63, "proto": 17,
+                                "chksum": struct.unpack_from(
+                                    "!H", output_header, 10)[0],
+                                "src": remote_v4, "dst": local_v4,
+                                "options": [],
+                            },
+                            {
+                                "layertype": "Udp", "sport": sport,
+                                "dport": dport,
+                                "len": len(output_segment),
+                                "chksum": output_checksum,
+                            },
+                            {"layertype": "raw",
+                             "data_prefix": list(marker)},
+                        ],
+                    },
+                },
+            ],
+        }, separators=(",", ":")) + "\n")
+    PROC_CONFIG_LONG_CONFIG_EXPECTED.write_text(expected_config)
+
+
 def ipv6_atomic_tcp_fragment_packet(identification, dport, timestamp_us):
     tcp = struct.pack(
         "!HHIIBBHHH", 12345, dport, 0, 0, 0x50, 2, 8192, 0, 0)
@@ -2250,6 +2391,7 @@ def main():
     generate_config_ranges()
     generate_map_zero_prefix()
     generate_remove_semantic_rule()
+    generate_proc_config_long()
     generate_rfc6052_prefix_lengths()
     generate_icmp_embedded_headers()
     generate_icmp_quote_output_limit()

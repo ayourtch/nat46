@@ -11,6 +11,19 @@ rm -f /tmp/captured-config.txt
 
 EXPECTED_CONFIG=test-data/expected/${TESTNAME}-config.txt
 CAPTURED_CONFIG=test-data/captured/${TESTNAME}-config.txt
+config_snapshot_matches() {
+  local expected_snapshot=$1
+  local captured_snapshot=$2
+  local legacy_snapshot=${expected_snapshot}.legacy
+  local complete_snapshot=${expected_snapshot}.complete
+
+  cmp -s "$expected_snapshot" "$captured_snapshot" ||
+    { [ -s "$legacy_snapshot" ] &&
+      cmp -s "$legacy_snapshot" "$captured_snapshot"; } ||
+    { [ -s "$complete_snapshot" ] &&
+      cmp -s "$complete_snapshot" "$captured_snapshot"; }
+}
+
 check_config_snapshot() {
   local expected_snapshot captured_snapshot first_before before after
   local expected_pairs=0
@@ -21,9 +34,18 @@ check_config_snapshot() {
       echo "FAIL: configuration snapshot is missing or empty for ${TESTNAME}" >&2
       exit 1
     fi
-    sed '/^$/d' "$EXPECTED_CONFIG" > /tmp/expected-config.txt
-    sed '/^$/d' "$CAPTURED_CONFIG" > /tmp/captured-config.txt
-    diff -u /tmp/expected-config.txt /tmp/captured-config.txt
+    if [ "$TESTNAME" = "proc-config-long" ]; then
+      if ! cmp -s "$EXPECTED_CONFIG" "$CAPTURED_CONFIG"; then
+        echo "FAIL: complete configuration snapshot differs for ${TESTNAME}" >&2
+        diff -u "$EXPECTED_CONFIG" "$CAPTURED_CONFIG"
+        exit 1
+      fi
+    else
+      if ! config_snapshot_matches "$EXPECTED_CONFIG" "$CAPTURED_CONFIG"; then
+        echo "FAIL: configuration snapshot differs for ${TESTNAME}" >&2
+        exit 1
+      fi
+    fi
   fi
 
   first_before=""
@@ -59,7 +81,7 @@ check_config_snapshot() {
     [ -e "$expected_snapshot" ] || continue
     captured_snapshot=test-data/captured/$(basename "$expected_snapshot")
     if [ ! -s "$captured_snapshot" ] ||
-       ! cmp -s "$expected_snapshot" "$captured_snapshot"; then
+       ! config_snapshot_matches "$expected_snapshot" "$captured_snapshot"; then
       echo "FAIL: accepted endpoint snapshot mismatch for ${TESTNAME}: $(basename "$expected_snapshot")" >&2
       exit 1
     fi

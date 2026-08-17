@@ -1,0 +1,14 @@
+# A maximally long valid rule must remain complete in the proc snapshot while
+# still driving an exact packet translation.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip -6 route add 2001:ffff:ffff:ffff::/64 dev nat46dev
+echo config nat46dev local.v4 198.255.254.253/32 local.v6 2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff/64 local.style RFC6052 local.ea-len 32 local.psid-offset 15 local.fmr-flag 1 remote.v4 198.255.254.254/32 remote.v6 2001:ffff:ffff:fffe:ffff:ffff:ffff:fffe/64 remote.style RFC6052 remote.ea-len 32 remote.psid-offset 15 remote.fmr-flag 1 debug -2147483648 > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/proc-config-long.jsonl
+inject /mnt/host/test-harness/tests/proc-config-long/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/proc-config-long-inject.log
+capture stop all
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/proc-config-long-config.txt
+
+echo del nat46dev > /proc/net/nat46/control

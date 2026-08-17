@@ -34,3 +34,4 @@ config-ranges
 rfc6052-prefix-lengths
 map-zero-prefix
 remove-semantic-rule
+proc-config-long

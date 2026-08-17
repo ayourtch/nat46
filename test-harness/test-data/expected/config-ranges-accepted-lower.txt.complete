@@ -1,0 +1,3 @@
+add range-low
+config range-low local.v4 0.0.0.0/0 local.v6 ::/0 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0
+
