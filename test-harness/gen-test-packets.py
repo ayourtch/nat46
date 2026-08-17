@@ -100,6 +100,12 @@ MAP_ZERO_PREFIX_EXPECTED = Path(
     "test-harness/test-data/expected/map-zero-prefix.jsonl")
 MAP_ZERO_PREFIX_CONFIG_EXPECTED = Path(
     "test-harness/test-data/expected/map-zero-prefix-config.txt")
+REMOVE_SEMANTIC_RULE_DIR = Path(
+    "test-harness/tests/remove-semantic-rule")
+REMOVE_SEMANTIC_RULE_EXPECTED = Path(
+    "test-harness/test-data/expected/remove-semantic-rule.jsonl")
+REMOVE_SEMANTIC_RULE_CONFIG_EXPECTED = Path(
+    "test-harness/test-data/expected/remove-semantic-rule-config.txt")
 
 
 def checksum(data):
@@ -1658,6 +1664,152 @@ def generate_map_zero_prefix():
         f"add nat46dev\nconfig nat46dev {config[:199]}\n\n")
 
 
+def generate_remove_semantic_rule():
+    local_v4 = "192.0.2.61"
+    remote_v4 = "198.51.100.71"
+    local_v6 = "2001:db8:1111:2222:3333:4444:5555:6666"
+    target_remote_v6 = "2001:db8:aaaa:bbbb:cccc:dddd:eeee:1111"
+    near_remote_v6 = "2001:db8:aaaa:bbbb:cccc:dddd:eeee:2222"
+
+    def serialized_rule(remote_v6):
+        return (
+            f"local.v4 {local_v4}/32 local.v6 {local_v6}/128 "
+            "local.style NONE local.ea-len 7 local.psid-offset 5 "
+            "local.fmr-flag 1 "
+            f"remote.v4 {remote_v4}/32 remote.v6 {remote_v6}/128 "
+            "remote.style NONE remote.ea-len 9 remote.psid-offset 6 "
+            "remote.fmr-flag 1 debug 0")
+
+    target_rule = serialized_rule(target_remote_v6)
+    near_rule = serialized_rule(near_remote_v6)
+    assert len(target_rule) == len(near_rule) == 304
+    assert target_rule[:199] == near_rule[:199]
+    assert next(i for i, values in enumerate(zip(target_rule, near_rule))
+                if values[0] != values[1]) == 215
+
+    cases = (
+        ("target-before", target_remote_v6, b"SEM-TARGET-PRE01",
+         62001, 63001, 0x5e01a101, 1000000, 1),
+        ("near-before", near_remote_v6, b"SEM-NEAR---PRE02",
+         62002, 63002, 0x5e01a102, 1100000, 1),
+        ("target-after", target_remote_v6, b"SEM-TARGET-POST3",
+         62003, 63003, 0x5e01a103, 1200000, 0),
+        ("near-after", near_remote_v6, b"SEM-NEAR--POST04",
+         62004, 63004, 0x5e01a104, 1300000, 1),
+    )
+    REMOVE_SEMANTIC_RULE_DIR.mkdir(parents=True, exist_ok=True)
+    checks = []
+    unfragmented_flags = {
+        "reserved": False,
+        "dont_fragment": False,
+        "more_fragments": False,
+        "fragment_offset": 0,
+    }
+    for (name, source_v6, marker, sport, dport, fragment_id,
+         timestamp_us, output_count) in cases:
+        source_segment = transport_segment(
+            source_v6, local_v6, 17, sport, dport, marker)
+        assert struct.unpack_from("!H", source_segment, 6)[0] != 0
+        fragment_header = struct.pack("!BBHI", 17, 0, 0, fragment_id)
+        fixture = {
+            "timestamp_us": timestamp_us,
+            "layers": [
+                {
+                    "layertype": "ether",
+                    "dst": "0E:86:3C:CD:51:CA",
+                    "src": "52:55:0A:00:02:02",
+                    "etype": 34525,
+                },
+                {
+                    "layertype": "Ipv6",
+                    "version_class": 0x60000000,
+                    "payload_length": len(fragment_header)
+                                      + len(source_segment),
+                    "next_header": 44, "hop_limit": 64,
+                    "src": source_v6, "dst": local_v6,
+                },
+                {"layertype": "raw",
+                 "data": list(fragment_header + source_segment)},
+            ],
+        }
+        (REMOVE_SEMANTIC_RULE_DIR
+         / f"inject-valid-{name}.jsonl").write_text(
+            json.dumps(fixture, separators=(",", ":")) + "\n")
+
+        output_segment = bytearray(source_segment)
+        struct.pack_into("!H", output_segment, 6, 0)
+        output_checksum = ipv4_transport_checksum(
+            remote_v4, local_v4, 17, output_segment)
+        assert output_checksum != 0
+        struct.pack_into("!H", output_segment, 6, output_checksum)
+        assert ipv4_transport_checksum(
+            remote_v4, local_v4, 17, output_segment) == 0
+        output_id = fragment_id & 0xffff
+        output_header = ipv4_header(
+            remote_v4, local_v4, 17, len(output_segment),
+            identification=output_id, ttl=63)
+        checks.extend((
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx", "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": len(fragment_header)
+                                              + len(source_segment),
+                            "next_header": 44, "hop_limit": 63,
+                            "src": source_v6, "dst": local_v6,
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(
+                             fragment_header + source_segment)},
+                    ],
+                },
+            },
+            {
+                "count": output_count,
+                "packet": {
+                    "direction": "rx", "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip", "version": 4, "ihl": 5,
+                            "tos": 0, "len": 20 + len(output_segment),
+                            "id": output_id, "flags": unfragmented_flags,
+                            "ttl": 63, "proto": 17,
+                            "chksum": struct.unpack_from(
+                                "!H", output_header, 10)[0],
+                            "src": remote_v4, "dst": local_v4,
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Udp", "sport": sport,
+                            "dport": dport, "len": len(output_segment),
+                            "chksum": output_checksum,
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(marker)},
+                    ],
+                },
+            },
+        ))
+
+    REMOVE_SEMANTIC_RULE_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({"expected_rx_count": 3, "checks": checks},
+                     separators=(",", ":")) + "\n")
+    empty_rule = (
+        "local.v4 0.0.0.0/0 local.v6 ::/0 local.style NONE "
+        "local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 "
+        "remote.v4 0.0.0.0/0 remote.v6 ::/0 remote.style NONE "
+        "remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0")
+    REMOVE_SEMANTIC_RULE_CONFIG_EXPECTED.write_text(
+        "add nat46dev\n"
+        f"insert nat46dev {near_rule[:199]}\n"
+        f"config nat46dev {empty_rule[:199]}\n\n")
+
+
 def ipv6_atomic_tcp_fragment_packet(identification, dport, timestamp_us):
     tcp = struct.pack(
         "!HHIIBBHHH", 12345, dport, 0, 0, 0x50, 2, 8192, 0, 0)
@@ -2097,6 +2249,7 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 def main():
     generate_config_ranges()
     generate_map_zero_prefix()
+    generate_remove_semantic_rule()
     generate_rfc6052_prefix_lengths()
     generate_icmp_embedded_headers()
     generate_icmp_quote_output_limit()

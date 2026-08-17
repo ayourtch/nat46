@@ -1,0 +1,26 @@
+# The first 199 serialized bytes of these distinct normalized rules collide.
+# Insert the target first and the near miss second so a truncated text compare
+# selects the wrong rule.  Remove the target with reordered fields and a
+# different accepted IPv6 spelling, then distinguish both rules by traffic.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+ip -6 route add 2001:db8:1111:2222:3333:4444:5555:6666/128 dev nat46dev
+
+echo insert nat46dev local.v4 192.0.2.61/32 local.v6 2001:0DB8:1111:2222:3333:4444:5555:6666/128 local.style NONE local.ea-len 7 local.psid-offset 5 local.fmr-flag 1 remote.v4 198.51.100.71/32 remote.v6 2001:0DB8:AAAA:BBBB:CCCC:DDDD:EEEE:1111/128 remote.style NONE remote.ea-len 9 remote.psid-offset 6 remote.fmr-flag 1 debug 0 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.0.2.61/32 local.v6 2001:0DB8:1111:2222:3333:4444:5555:6666/128 local.style NONE local.ea-len 7 local.psid-offset 5 local.fmr-flag 1 remote.v4 198.51.100.71/32 remote.v6 2001:0DB8:AAAA:BBBB:CCCC:DDDD:EEEE:2222/128 remote.style NONE remote.ea-len 9 remote.psid-offset 6 remote.fmr-flag 1 debug 0 > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/remove-semantic-rule.jsonl
+inject /mnt/host/test-harness/tests/remove-semantic-rule/inject-valid-target-before.jsonl tap0 > /mnt/host/test-harness/test-data/captured/remove-semantic-rule-inject-valid-target-before.log
+inject /mnt/host/test-harness/tests/remove-semantic-rule/inject-valid-near-before.jsonl tap0 > /mnt/host/test-harness/test-data/captured/remove-semantic-rule-inject-valid-near-before.log
+
+echo remove nat46dev remote.fmr-flag 1 local.psid-offset 5 remote.v6 2001:db8:aaaa:bbbb:cccc:dddd:eeee:1111/128 local.v6 2001:db8:1111:2222:3333:4444:5555:6666/128 remote.style NONE local.fmr-flag 1 remote.v4 198.51.100.71/32 local.style NONE remote.ea-len 9 local.v4 192.0.2.61/32 remote.psid-offset 6 local.ea-len 7 debug 0 > /proc/net/nat46/control
+inject /mnt/host/test-harness/tests/remove-semantic-rule/inject-valid-target-after.jsonl tap0 > /mnt/host/test-harness/test-data/captured/remove-semantic-rule-inject-valid-target-after.log
+inject /mnt/host/test-harness/tests/remove-semantic-rule/inject-valid-near-after.jsonl tap0 > /mnt/host/test-harness/test-data/captured/remove-semantic-rule-inject-valid-near-after.log
+capture stop all
+
+# Reconfigure the surviving default pair without changing its serialized form.
+echo config nat46dev debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/remove-semantic-rule-config.txt
+echo del nat46dev > /proc/net/nat46/control
