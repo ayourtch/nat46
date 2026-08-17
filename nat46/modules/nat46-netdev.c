@@ -295,13 +295,29 @@ int nat46_configure(struct net *net, char *devname, char *buf) {
 	}
 }
 
+static int nat46_rule_equal(const nat46_xlate_rule_t *a,
+			    const nat46_xlate_rule_t *b) {
+	return a->style == b->style &&
+	       ipv6_addr_equal(&a->v6_pref, &b->v6_pref) &&
+	       a->v6_pref_len == b->v6_pref_len &&
+	       a->v4_pref == b->v4_pref &&
+	       a->v4_pref_len == b->v4_pref_len &&
+	       a->ea_len == b->ea_len &&
+	       a->psid_offset == b->psid_offset &&
+	       a->fmr_flag == b->fmr_flag;
+}
+
+static int nat46_rulepair_equal(const nat46_xlate_rulepair_t *a,
+				const nat46_xlate_rulepair_t *b) {
+	return nat46_rule_equal(&a->local, &b->local) &&
+	       nat46_rule_equal(&a->remote, &b->remote);
+}
+
 int nat46_remove(struct net *net, char *devname, char *buf) {
 	int ret = -1;
-	char config_remove[NAT46_CFG_BUFLEN];
 	struct net_device *dev;
 	nat46_instance_t *nat46;
 	nat46_instance_t *nat46_remove;
-	int result_rem;
 	int i;
 
 	if((dev = find_dev(net, devname)) == NULL ||
@@ -310,17 +326,14 @@ int nat46_remove(struct net *net, char *devname, char *buf) {
 		return ret;
 	}
 
-	if(nat46_set_ipair_config(nat46_remove, 0, buf, NAT46_CFG_BUFLEN) < 0) {
+	if(nat46_set_ipair_config(nat46_remove, 0, buf, strlen(buf)) < 0) {
 		release_nat46_instance(nat46_remove);
 		return ret;
 	}
 
-	result_rem = nat46_get_ipair_config(nat46_remove, 0, config_remove, NAT46_CFG_BUFLEN);
 	for(i = 0; i < nat46->npairs; i++) {
-		char config[NAT46_CFG_BUFLEN];
-		int result = nat46_get_ipair_config(nat46, i, config, NAT46_CFG_BUFLEN);
-
-		if (result_rem == result && strncmp(config_remove, config, result_rem) == 0) {
+		if (nat46_rulepair_equal(&nat46_remove->pairs[0],
+					 &nat46->pairs[i])) {
 			nat46_instance_t *nat46_new = alloc_nat46_instance(nat46->npairs-1, nat46, 0, 0, i);
 			if(nat46_new) {
 				netdev_nat46_set_instance(dev, nat46_new);
