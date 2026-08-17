@@ -84,7 +84,8 @@ if [ -f "$INJECTION_INPUT" ]; then
     exit 1
   fi
 fi
-for INJECTION_INPUT in tests/${TESTNAME}/inject-case-*.jsonl; do
+for INJECTION_INPUT in tests/${TESTNAME}/inject-case-*.jsonl \
+                       tests/${TESTNAME}/inject-valid-*.jsonl; do
   [ -e "$INJECTION_INPUT" ] || continue
   INJECTION_STEM=$(basename "$INJECTION_INPUT" .jsonl)
   INJECTION_LOG=test-data/captured/${TESTNAME}-${INJECTION_STEM}.log

@@ -1,0 +1,101 @@
+# Exercise both translation directions for every RFC 6052 prefix length, then
+# prove that each immediate unsupported neighbor leaves one valid /96 rule live.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+ip -6 route add 2001:db8:1:1::1/128 dev nat46dev
+capture start nat46dev /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths.jsonl
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:db8::/32 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-valid-32.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-valid-32.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:db9:100::/40 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-valid-40.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-valid-40.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dba:2::/48 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-valid-48.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-valid-48.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbb:3:400::/56 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-valid-56.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-valid-56.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbc:4:5::/64 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-valid-64.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-valid-64.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-valid-96.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-valid-96.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-01-prefix-31-before.txt
+echo config nat46dev remote.v6 2001:db8::/31 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-01-prefix-31-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-01-prefix-31.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-01-prefix-31.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-02-prefix-33-before.txt
+echo config nat46dev remote.v6 2001:db8::/33 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-02-prefix-33-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-02-prefix-33.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-02-prefix-33.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-03-prefix-39-before.txt
+echo config nat46dev remote.v6 2001:db9::/39 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-03-prefix-39-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-03-prefix-39.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-03-prefix-39.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-04-prefix-41-before.txt
+echo config nat46dev remote.v6 2001:db9::/41 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-04-prefix-41-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-04-prefix-41.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-04-prefix-41.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-05-prefix-47-before.txt
+echo config nat46dev remote.v6 2001:dba::/47 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-05-prefix-47-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-05-prefix-47.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-05-prefix-47.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-06-prefix-49-before.txt
+echo config nat46dev remote.v6 2001:dba::/49 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-06-prefix-49-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-06-prefix-49.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-06-prefix-49.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-07-prefix-55-before.txt
+echo config nat46dev remote.v6 2001:dbb::/55 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-07-prefix-55-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-07-prefix-55.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-07-prefix-55.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-08-prefix-57-before.txt
+echo config nat46dev remote.v6 2001:dbb::/57 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-08-prefix-57-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-08-prefix-57.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-08-prefix-57.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-09-prefix-63-before.txt
+echo config nat46dev remote.v6 2001:dbc:4::/63 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-09-prefix-63-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-09-prefix-63.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-09-prefix-63.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-10-prefix-65-before.txt
+echo config nat46dev remote.v6 2001:dbc:4::/65 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-10-prefix-65-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-10-prefix-65.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-10-prefix-65.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-11-prefix-95-before.txt
+echo config nat46dev remote.v6 2001:dbd:5::/95 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-11-prefix-95-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-11-prefix-95.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-11-prefix-95.log
+
+echo config nat46dev local.v4 192.168.1.100/32 local.v6 2001:db8:1:1::1/128 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 2001:dbd:5:6::/96 remote.style RFC6052 remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-12-prefix-97-before.txt
+echo config nat46dev remote.v6 2001:dbd:5::/97 remote.style RFC6052 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-preserve-case-12-prefix-97-after.txt
+inject /mnt/host/test-harness/tests/rfc6052-prefix-lengths/inject-case-12-prefix-97.jsonl tap0 > /mnt/host/test-harness/test-data/captured/rfc6052-prefix-lengths-inject-case-12-prefix-97.log
+
+capture stop all
+echo del nat46dev > /proc/net/nat46/control

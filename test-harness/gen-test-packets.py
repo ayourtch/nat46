@@ -90,6 +90,10 @@ QUOTED_ICMP_ECHO_CHECKSUM_EXPECTED = Path(
 CONFIG_RANGES_DIR = Path("test-harness/tests/config-ranges")
 CONFIG_RANGES_EXPECTED = Path(
     "test-harness/test-data/expected/config-ranges.jsonl")
+RFC6052_PREFIX_LENGTHS_DIR = Path(
+    "test-harness/tests/rfc6052-prefix-lengths")
+RFC6052_PREFIX_LENGTHS_EXPECTED = Path(
+    "test-harness/test-data/expected/rfc6052-prefix-lengths.jsonl")
 
 
 def checksum(data):
@@ -1561,6 +1565,306 @@ def rfc6052_address(prefix, ipv4):
     return ipv6
 
 
+def generate_rfc6052_prefix_lengths():
+    accepted = (
+        (32, "2001:db8::/32"),
+        (40, "2001:db9:100::/40"),
+        (48, "2001:dba:2::/48"),
+        (56, "2001:dbb:3:400::/56"),
+        (64, "2001:dbc:4:5::/64"),
+        (96, "2001:dbd:5:6::/96"),
+    )
+    rejected = (31, 33, 39, 41, 47, 49, 55, 57, 63, 65, 95, 97)
+    rejected_prefixes = (
+        "2001:db8::/31",
+        "2001:db8::/33",
+        "2001:db9::/39",
+        "2001:db9::/41",
+        "2001:dba::/47",
+        "2001:dba::/49",
+        "2001:dbb::/55",
+        "2001:dbb::/57",
+        "2001:dbc:4::/63",
+        "2001:dbc:4::/65",
+        "2001:dbd:5::/95",
+        "2001:dbd:5::/97",
+    )
+    unfragmented_flags = {
+        "reserved": False,
+        "dont_fragment": False,
+        "more_fragments": False,
+        "fragment_offset": 0,
+    }
+
+    assert tuple(length for length, _prefix in accepted) == (
+        32, 40, 48, 56, 64, 96)
+    assert tuple(ipaddress.IPv6Network(prefix).prefixlen
+                 for prefix in rejected_prefixes) == rejected
+
+    RFC6052_PREFIX_LENGTHS_DIR.mkdir(parents=True, exist_ok=True)
+    for pattern in ("inject-valid-*.jsonl", "inject-case-*.jsonl"):
+        for old_fixture in RFC6052_PREFIX_LENGTHS_DIR.glob(pattern):
+            old_fixture.unlink()
+
+    checks = []
+    for index, (prefix_length, prefix) in enumerate(accepted, start=1):
+        embedded_bytes = bytes(rfc6052_address(prefix, "8.8.8.8"))
+        embedded = str(ipaddress.IPv6Address(embedded_bytes))
+        network = ipaddress.IPv6Network(prefix)
+        assert ipaddress.IPv6Address(embedded) in network
+        if prefix_length == 96:
+            assert embedded_bytes[12:] == ipaddress.IPv4Address(
+                "8.8.8.8").packed
+        else:
+            assert embedded_bytes[8] == 0
+            suffix_start = 9 + 4 - ((64 - prefix_length) // 8)
+            assert embedded_bytes[suffix_start:] == bytes(16 - suffix_start)
+
+        v4_marker = f"R6052-A{prefix_length}-4TO6".encode()
+        v6_marker = f"R6052-A{prefix_length}-6TO4".encode()
+        v4_sport = 50000 + index * 2
+        v4_dport = 51000 + index * 2
+        v6_sport = v4_sport + 1
+        v6_dport = v4_dport + 1
+        identification = 0xd200 + index
+
+        v4_source_segment = transport_segment(
+            "192.168.1.100", "8.8.8.8", 17,
+            v4_sport, v4_dport, v4_marker)
+        v4_packet = ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 17, identification,
+            0, False, v4_source_segment)
+        v4_packet["timestamp_us"] = 1000000
+
+        v6_source_segment = transport_segment(
+            embedded, LOCAL_V6, 17, v6_sport, v6_dport, v6_marker)
+        v6_packet = {
+            "timestamp_us": 1100000,
+            "layers": [
+                {
+                    "layertype": "ether",
+                    "dst": "0E:86:3C:CD:51:CA",
+                    "src": "52:55:0A:00:02:02",
+                    "etype": 34525,
+                },
+                {
+                    "layertype": "Ipv6",
+                    "version_class": 0x60000000,
+                    "payload_length": len(v6_source_segment),
+                    "next_header": 17,
+                    "hop_limit": 64,
+                    "src": embedded,
+                    "dst": LOCAL_V6,
+                },
+                {"layertype": "raw", "data": list(v6_source_segment)},
+            ],
+        }
+        valid_fixture = (RFC6052_PREFIX_LENGTHS_DIR
+                         / f"inject-valid-{prefix_length}.jsonl")
+        valid_fixture.write_text("".join(
+            json.dumps(packet, separators=(",", ":")) + "\n"
+            for packet in (v4_packet, v6_packet)))
+
+        v6_output_segment = transport_segment(
+            LOCAL_V6, embedded, 17, v4_sport, v4_dport, v4_marker)
+        v4_output_segment = transport_segment(
+            "8.8.8.8", "192.168.1.100", 17,
+            v6_sport, v6_dport, v6_marker)
+        forwarded_v4_header = ipv4_header(
+            "192.168.1.100", "8.8.8.8", 17,
+            len(v4_source_segment), identification=identification, ttl=254)
+        checks.extend((
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip", "version": 4, "ihl": 5,
+                            "tos": 0, "len": 20 + len(v4_source_segment),
+                            "id": identification,
+                            "flags": unfragmented_flags, "ttl": 254,
+                            "proto": 17,
+                            "chksum": struct.unpack_from(
+                                "!H", forwarded_v4_header, 10)[0],
+                            "src": "192.168.1.100", "dst": "8.8.8.8",
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Udp", "sport": v4_sport,
+                            "dport": v4_dport,
+                            "len": len(v4_source_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", v4_source_segment, 6)[0],
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(v4_marker)},
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": len(v6_output_segment),
+                            "next_header": 17, "hop_limit": 254,
+                            "src": LOCAL_V6, "dst": embedded,
+                        },
+                        {
+                            "layertype": "Udp", "sport": v4_sport,
+                            "dport": v4_dport,
+                            "len": len(v6_output_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", v6_output_segment, 6)[0],
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(v4_marker)},
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": len(v6_source_segment),
+                            "next_header": 17, "hop_limit": 63,
+                            "src": embedded, "dst": LOCAL_V6,
+                        },
+                        {
+                            "layertype": "Udp", "sport": v6_sport,
+                            "dport": v6_dport,
+                            "len": len(v6_source_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", v6_source_segment, 6)[0],
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(v6_marker)},
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip", "version": 4, "ihl": 5,
+                            "tos": 0, "len": 20 + len(v4_output_segment),
+                            "flags": unfragmented_flags, "ttl": 63,
+                            "proto": 17, "src": "8.8.8.8",
+                            "dst": "192.168.1.100", "options": [],
+                        },
+                        {
+                            "layertype": "Udp", "sport": v6_sport,
+                            "dport": v6_dport,
+                            "len": len(v4_output_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", v4_output_segment, 6)[0],
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(v6_marker)},
+                    ],
+                },
+            },
+        ))
+
+    baseline_prefix = "2001:dbd:5:6::/96"
+    baseline_embedded = str(ipaddress.IPv6Address(
+        bytes(rfc6052_address(baseline_prefix, "8.8.8.8"))))
+    for index, prefix_length in enumerate(rejected, start=1):
+        marker = f"R6052-R{prefix_length}-OK".encode()
+        sport = 52000 + index
+        dport = 53000 + index
+        identification = 0xd300 + index
+        source_segment = transport_segment(
+            "192.168.1.100", "8.8.8.8", 17, sport, dport, marker)
+        packet = ipv4_fragment_packet(
+            "192.168.1.100", "8.8.8.8", 17, identification,
+            0, False, source_segment)
+        rejected_fixture = (RFC6052_PREFIX_LENGTHS_DIR
+                            / (f"inject-case-{index:02d}-prefix-"
+                               f"{prefix_length}.jsonl"))
+        rejected_fixture.write_text(
+            json.dumps(packet, separators=(",", ":")) + "\n")
+
+        output_segment = transport_segment(
+            LOCAL_V6, baseline_embedded, 17, sport, dport, marker)
+        forwarded_header = ipv4_header(
+            "192.168.1.100", "8.8.8.8", 17, len(source_segment),
+            identification=identification, ttl=254)
+        checks.extend((
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip", "version": 4, "ihl": 5,
+                            "tos": 0, "len": 20 + len(source_segment),
+                            "id": identification,
+                            "flags": unfragmented_flags, "ttl": 254,
+                            "proto": 17,
+                            "chksum": struct.unpack_from(
+                                "!H", forwarded_header, 10)[0],
+                            "src": "192.168.1.100", "dst": "8.8.8.8",
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Udp", "sport": sport,
+                            "dport": dport, "len": len(source_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", source_segment, 6)[0],
+                        },
+                        {"layertype": "raw", "data_prefix": list(marker)},
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx",
+                    "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": len(output_segment),
+                            "next_header": 17, "hop_limit": 254,
+                            "src": LOCAL_V6, "dst": baseline_embedded,
+                        },
+                        {
+                            "layertype": "Udp", "sport": sport,
+                            "dport": dport, "len": len(output_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", output_segment, 6)[0],
+                        },
+                        {"layertype": "raw", "data_prefix": list(marker)},
+                    ],
+                },
+            },
+        ))
+
+    RFC6052_PREFIX_LENGTHS_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({
+            "expected_rx_count": 2 * len(accepted) + len(rejected),
+            "checks": checks,
+        }, separators=(",", ":")) + "\n")
+
+
 def icmpv6_error_packet(quoted_packet, timestamp_us=1000000,
                         trailing_data=b"", icmp_type=1, icmp_code=0,
                         field=0):
@@ -1601,6 +1905,7 @@ def write_icmpv6_error_fixture(path, quoted_packet):
 
 def main():
     generate_config_ranges()
+    generate_rfc6052_prefix_lengths()
     generate_icmp_embedded_headers()
     generate_icmp_quote_output_limit()
     generate_quoted_fragmented_icmp()
