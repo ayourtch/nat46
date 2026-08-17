@@ -148,30 +148,60 @@ char *get_next_arg(char **ptail) {
  * Parse an IPv6 address (if pref_len is NULL), or prefix (if it isn't).
  * parses destructively (places \0 between address and prefix len)
  */
+static int try_parse_int_range(const char *name, const char *val,
+                               int minimum, int maximum, int *result) {
+  int parsed;
+
+  if (kstrtoint(val, 10, &parsed) || parsed < minimum || parsed > maximum) {
+    printk("[nat46] invalid %s %s (expected %d-%d)\n",
+           name, val, minimum, maximum);
+    return -1;
+  }
+
+  *result = parsed;
+  return 0;
+}
+
 static int try_parse_ipv6_prefix(struct in6_addr *pref, int *pref_len, char *arg) {
-  int err = 0;
+  struct in6_addr parsed_pref;
+  int parsed_pref_len = pref_len ? *pref_len : 0;
   char *arg_plen = strchr(arg, '/');
+
   if (arg_plen) {
     *arg_plen++ = 0;
-    if (pref_len) {
-      *pref_len = simple_strtol(arg_plen, NULL, 10);
-    }
+    if (pref_len && try_parse_int_range("IPv6 prefix length", arg_plen,
+                                        0, 128, &parsed_pref_len))
+      return -1;
   }
-  err = (1 != in6_pton(arg, -1, (u8 *)pref, '\0', NULL));
-  return err;
+
+  if (1 != in6_pton(arg, -1, (u8 *)&parsed_pref, '\0', NULL))
+    return -1;
+
+  *pref = parsed_pref;
+  if (arg_plen && pref_len)
+    *pref_len = parsed_pref_len;
+  return 0;
 }
 
 static int try_parse_ipv4_prefix(u32 *v4addr, int *pref_len, char *arg) {
-  int err = 0;
+  u32 parsed_addr;
+  int parsed_pref_len = pref_len ? *pref_len : 0;
   char *arg_plen = strchr(arg, '/');
+
   if (arg_plen) {
     *arg_plen++ = 0;
-    if (pref_len) {
-      *pref_len = simple_strtol(arg_plen, NULL, 10);
-    }
+    if (pref_len && try_parse_int_range("IPv4 prefix length", arg_plen,
+                                        0, 32, &parsed_pref_len))
+      return -1;
   }
-  err = (1 != in4_pton(arg, -1, (u8 *)v4addr, '/', NULL));
-  return err;
+
+  if (1 != in4_pton(arg, -1, (u8 *)&parsed_addr, '/', NULL))
+    return -1;
+
+  *v4addr = parsed_addr;
+  if (arg_plen && pref_len)
+    *pref_len = parsed_pref_len;
+  return 0;
 }
 
 
@@ -191,9 +221,12 @@ static int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **p
   } else if (0 == strcmp(arg_name, "v4")) {
     err = try_parse_ipv4_prefix(&rule->v4_pref, &rule->v4_pref_len, val);
   } else if (0 == strcmp(arg_name, "ea-len")) {
-    rule->ea_len = simple_strtol(val, NULL, 10);
+    err = try_parse_int_range("EA length", val, 0, 32, &rule->ea_len);
   } else if (0 == strcmp(arg_name, "psid-offset")) {
-    rule->psid_offset = simple_strtol(val, NULL, 10);
+    err = try_parse_int_range("PSID offset", val, 0, 15,
+                              &rule->psid_offset);
+  } else if (0 == strcmp(arg_name, "fmr-flag")) {
+    err = try_parse_int_range("FMR flag", val, 0, 1, &rule->fmr_flag);
   } else if (0 == strcmp(arg_name, "style")) {
     if (0 == strcmp("MAP", val)) {
       rule->style = NAT46_XLATE_MAP;
@@ -310,7 +343,7 @@ static char *xlate_style_to_string(nat46_xlate_style_t style) {
 int nat46_get_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int count) {
   int ret = 0;
   nat46_xlate_rulepair_t *apair = NULL;
-  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d debug %d";
+  char *format = "local.v4 %pI4/%d local.v6 %pI6c/%d local.style %s local.ea-len %d local.psid-offset %d local.fmr-flag %d remote.v4 %pI4/%d remote.v6 %pI6c/%d remote.style %s remote.ea-len %d remote.psid-offset %d remote.fmr-flag %d debug %d";
 
   if ((ipair < 0) || (ipair >= nat46->npairs)) {
     return ret;
@@ -322,11 +355,13 @@ int nat46_get_ipair_config(nat46_instance_t *nat46, int ipair, char *buf, int co
 		&apair->local.v6_pref, apair->local.v6_pref_len,
 		xlate_style_to_string(apair->local.style),
 		apair->local.ea_len, apair->local.psid_offset,
+		apair->local.fmr_flag,
 
 		&apair->remote.v4_pref, apair->remote.v4_pref_len,
 		&apair->remote.v6_pref, apair->remote.v6_pref_len,
 		xlate_style_to_string(apair->remote.style),
 		apair->remote.ea_len, apair->remote.psid_offset,
+		apair->remote.fmr_flag,
 
 		nat46->debug);
   return ret;
