@@ -16,18 +16,61 @@ config_snapshot_matches() {
   local captured_snapshot=$2
   local legacy_snapshot=${expected_snapshot}.legacy
   local complete_snapshot=${expected_snapshot}.complete
+  local replay_snapshot=${expected_snapshot}.replay
 
   cmp -s "$expected_snapshot" "$captured_snapshot" ||
     { [ -s "$legacy_snapshot" ] &&
       cmp -s "$legacy_snapshot" "$captured_snapshot"; } ||
     { [ -s "$complete_snapshot" ] &&
-      cmp -s "$complete_snapshot" "$captured_snapshot"; }
+      cmp -s "$complete_snapshot" "$captured_snapshot"; } ||
+    { [ -s "$replay_snapshot" ] &&
+      cmp -s "$replay_snapshot" "$captured_snapshot"; }
 }
 
 check_config_snapshot() {
   local expected_snapshot captured_snapshot first_before before after
   local expected_pairs=0
   local actual_pairs=0
+
+  if [ "$TESTNAME" = "proc-replay" ]; then
+    expected_snapshot=test-data/captured/proc-replay-roundtrip-before.txt
+    captured_snapshot=test-data/captured/proc-replay-roundtrip-after.txt
+    if [ ! -s "$expected_snapshot" ] || [ ! -s "$captured_snapshot" ] ||
+       ! cmp -s "$expected_snapshot" "$captured_snapshot"; then
+      echo "FAIL: replay changed proc configuration bytes for ${TESTNAME}" >&2
+      exit 1
+    fi
+    replay_input=/tmp/proc-replay-input.txt
+    replay_count=0
+    : > "$replay_input"
+    while IFS= read -r replay_command; do
+      case "$replay_command" in
+        "echo > /proc/net/nat46/control")
+          replay_payload=""
+          ;;
+        "echo "*" > /proc/net/nat46/control")
+          replay_payload=${replay_command#echo }
+          replay_payload=${replay_payload% > /proc/net/nat46/control}
+          ;;
+        *)
+          echo "FAIL: malformed replay command for ${TESTNAME}" >&2
+          exit 1
+          ;;
+      esac
+      printf '%s\n' "$replay_payload" >> "$replay_input"
+      replay_count=$((replay_count + 1))
+    done < tests/proc-replay/replay.run
+    if [ "$replay_count" -ne 5 ] ||
+       ! cmp -s "$EXPECTED_CONFIG" "$replay_input"; then
+      echo "FAIL: replay command payloads differ for ${TESTNAME}" >&2
+      exit 1
+    fi
+    if ! grep -Fqx "Replay complete: 5 line writes" \
+       test-data/captured/proc-replay-runtime.txt; then
+      echo "FAIL: replay line-write completion is missing for ${TESTNAME}" >&2
+      exit 1
+    fi
+  fi
 
   if [ -f "$EXPECTED_CONFIG" ]; then
     if [ ! -s "$CAPTURED_CONFIG" ]; then
@@ -122,6 +165,12 @@ for INJECTION_INPUT in tests/${TESTNAME}/inject-case-*.jsonl \
 done
 
 if [ "$ASSERTION_KIND" = "# packet assertion" ]; then
+  CAPTURED_PACKETS=test-data/captured/${TESTNAME}.jsonl
+  if [ "$TESTNAME" = "proc-replay" ]; then
+    CAPTURED_PACKETS=/tmp/proc-replay-captured.jsonl
+    cat test-data/captured/proc-replay-source.txt \
+        test-data/captured/proc-replay-replayed.txt > "$CAPTURED_PACKETS"
+  fi
   tail -n +2 test-data/expected/${TESTNAME}.jsonl > /tmp/packet-assertion.json
   if ! jq -s --slurpfile spec /tmp/packet-assertion.json '
     def layer_matches($expected; $actual):
@@ -184,7 +233,7 @@ if [ "$ASSERTION_KIND" = "# packet assertion" ]; then
         map({direction: .[0].direction, count: length})),
       captured_packets: [$packets[] | packet_summary]
     }
-  ' test-data/captured/${TESTNAME}.jsonl \
+  ' "$CAPTURED_PACKETS" \
       > /tmp/packet-assertion-result.json; then
     echo "FAIL: could not evaluate structured packet assertion for ${TESTNAME}" >&2
     exit 1
@@ -195,7 +244,7 @@ if [ "$ASSERTION_KIND" = "# packet assertion" ]; then
     exit 1
   fi
   if ! "$SCRIPT_DIR/validate-packet-checksums" \
-       test-data/captured/${TESTNAME}.jsonl /tmp/packet-assertion.json; then
+       "$CAPTURED_PACKETS" /tmp/packet-assertion.json; then
     echo "FAIL: packet checksum assertion failed for ${TESTNAME}" >&2
     exit 1
   fi

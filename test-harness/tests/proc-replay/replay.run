@@ -1,0 +1,5 @@
+echo add nat46dev > /proc/net/nat46/control
+echo config nat46dev local.v4 192.0.2.30/32 local.v6 2001:db8:c::30/128 local.style NONE local.ea-len 3 local.psid-offset 2 local.fmr-flag 0 remote.v4 198.51.100.40/32 remote.v6 2001:db8:c::40/128 remote.style NONE remote.ea-len 4 remote.psid-offset 3 remote.fmr-flag 1 debug 7 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.0.2.10/32 local.v6 2001:db8:b::10/128 local.style NONE local.ea-len 5 local.psid-offset 4 local.fmr-flag 1 remote.v4 198.51.100.20/32 remote.v6 2001:db8:b::20/128 remote.style NONE remote.ea-len 6 remote.psid-offset 5 remote.fmr-flag 0 debug 7 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.0.2.10/32 local.v6 2001:db8:a::10/128 local.style NONE local.ea-len 7 local.psid-offset 6 local.fmr-flag 0 remote.v4 198.51.100.20/32 remote.v6 2001:db8:a::20/128 remote.style NONE remote.ea-len 8 remote.psid-offset 7 remote.fmr-flag 1 debug 7 > /proc/net/nat46/control
+echo > /proc/net/nat46/control

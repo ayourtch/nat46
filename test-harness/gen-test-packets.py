@@ -111,6 +111,11 @@ PROC_CONFIG_LONG_EXPECTED = Path(
     "test-harness/test-data/expected/proc-config-long.jsonl")
 PROC_CONFIG_LONG_CONFIG_EXPECTED = Path(
     "test-harness/test-data/expected/proc-config-long-config.txt")
+PROC_REPLAY_DIR = Path("test-harness/tests/proc-replay")
+PROC_REPLAY_EXPECTED = Path(
+    "test-harness/test-data/expected/proc-replay.jsonl")
+PROC_REPLAY_CONFIG_EXPECTED = Path(
+    "test-harness/test-data/expected/proc-replay-config.txt")
 
 
 def checksum(data):
@@ -1951,6 +1956,272 @@ def generate_proc_config_long():
     PROC_CONFIG_LONG_CONFIG_EXPECTED.write_text(expected_config)
 
 
+def generate_proc_replay():
+    shared_local_v4 = "192.0.2.10"
+    shared_remote_v4 = "198.51.100.20"
+    winner_local_v6 = "2001:db8:a::10"
+    winner_remote_v6 = "2001:db8:a::20"
+    shadow_local_v6 = "2001:db8:b::10"
+    shadow_remote_v6 = "2001:db8:b::20"
+    distinct_local_v4 = "192.0.2.30"
+    distinct_remote_v4 = "198.51.100.40"
+    distinct_local_v6 = "2001:db8:c::30"
+    distinct_remote_v6 = "2001:db8:c::40"
+
+    def serialized_rule(local_v4, local_v6, remote_v4, remote_v6,
+                        local_ea, local_offset, local_fmr,
+                        remote_ea, remote_offset, remote_fmr):
+        return (
+            f"local.v4 {local_v4}/32 local.v6 {local_v6}/128 "
+            f"local.style NONE local.ea-len {local_ea} "
+            f"local.psid-offset {local_offset} local.fmr-flag {local_fmr} "
+            f"remote.v4 {remote_v4}/32 remote.v6 {remote_v6}/128 "
+            f"remote.style NONE remote.ea-len {remote_ea} "
+            f"remote.psid-offset {remote_offset} "
+            f"remote.fmr-flag {remote_fmr} debug 7")
+
+    winner_rule = serialized_rule(
+        shared_local_v4, winner_local_v6,
+        shared_remote_v4, winner_remote_v6, 7, 6, 0, 8, 7, 1)
+    shadow_rule = serialized_rule(
+        shared_local_v4, shadow_local_v6,
+        shared_remote_v4, shadow_remote_v6, 5, 4, 1, 6, 5, 0)
+    distinct_rule = serialized_rule(
+        distinct_local_v4, distinct_local_v6,
+        distinct_remote_v4, distinct_remote_v6, 3, 2, 0, 4, 3, 1)
+    assert len({winner_rule, shadow_rule, distinct_rule}) == 3
+    assert all("\n" not in rule
+               for rule in (winner_rule, shadow_rule, distinct_rule))
+
+    # Replay must configure the tail first, then prepend earlier rules from
+    # back to front.  This reconstructs the original [winner, shadow,
+    # distinct] first-match order.
+    expected_config = (
+        "add nat46dev\n"
+        f"config nat46dev {distinct_rule}\n"
+        f"insert nat46dev {shadow_rule}\n"
+        f"insert nat46dev {winner_rule}\n\n")
+    assert expected_config.endswith("\n\n")
+    assert expected_config.count("\n") == 5
+    PROC_REPLAY_CONFIG_EXPECTED.write_text(expected_config)
+    control_path = "/proc/net/nat46/control"
+    replay_script = "".join(
+        (f"echo {line} > {control_path}\n"
+         if line else f"echo > {control_path}\n")
+        for line in expected_config.splitlines())
+    replay_payload = "".join(
+        line.removeprefix("echo ").removesuffix(
+            f" > {control_path}\n") + "\n"
+        if line != f"echo > {control_path}\n" else "\n"
+        for line in replay_script.splitlines(keepends=True))
+    assert replay_payload == expected_config
+
+    unfragmented_flags = {
+        "reserved": False,
+        "dont_fragment": False,
+        "more_fragments": False,
+        "fragment_offset": 0,
+    }
+    checks = []
+
+    def ipv4_case(src, dst, output_src, output_dst, sport, dport,
+                  marker, identification, timestamp_us):
+        source_segment = transport_segment(
+            src, dst, 17, sport, dport, marker)
+        packet = ipv4_fragment_packet(
+            src, dst, 17, identification, 0, False, source_segment)
+        packet["timestamp_us"] = timestamp_us
+        source_header = ipv4_header(
+            src, dst, 17, len(source_segment),
+            identification=identification, ttl=255)
+        assert checksum(source_header) == 0
+
+        output_segment = transport_segment(
+            output_src, output_dst, 17, sport, dport, marker)
+        forwarded_header = ipv4_header(
+            src, dst, 17, len(source_segment),
+            identification=identification, ttl=254)
+        checks.extend((
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx", "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip", "version": 4,
+                            "ihl": 5, "tos": 0,
+                            "len": 20 + len(source_segment),
+                            "id": identification,
+                            "flags": unfragmented_flags,
+                            "ttl": 254, "proto": 17,
+                            "chksum": struct.unpack_from(
+                                "!H", forwarded_header, 10)[0],
+                            "src": src, "dst": dst, "options": [],
+                        },
+                        {
+                            "layertype": "Udp", "sport": sport,
+                            "dport": dport, "len": len(source_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", source_segment, 6)[0],
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(marker)},
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx", "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": len(output_segment),
+                            "next_header": 17, "hop_limit": 254,
+                            "src": output_src, "dst": output_dst,
+                        },
+                        {
+                            "layertype": "Udp", "sport": sport,
+                            "dport": dport, "len": len(output_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", output_segment, 6)[0],
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(marker)},
+                    ],
+                },
+            },
+        ))
+        return packet
+
+    def ipv6_atomic_case(src, dst, output_src, output_dst, sport, dport,
+                         marker, fragment_id, timestamp_us):
+        source_segment = transport_segment(
+            src, dst, 17, sport, dport, marker)
+        fragment_header = struct.pack("!BBHI", 17, 0, 0, fragment_id)
+        packet = {
+            "timestamp_us": timestamp_us,
+            "layers": [
+                {
+                    "layertype": "ether",
+                    "dst": "0E:86:3C:CD:51:CA",
+                    "src": "52:55:0A:00:02:02",
+                    "etype": 34525,
+                },
+                {
+                    "layertype": "Ipv6",
+                    "version_class": 0x60000000,
+                    "payload_length": (len(fragment_header)
+                                       + len(source_segment)),
+                    "next_header": 44, "hop_limit": 64,
+                    "src": src, "dst": dst,
+                },
+                {"layertype": "raw",
+                 "data": list(fragment_header + source_segment)},
+            ],
+        }
+
+        output_segment = transport_segment(
+            output_src, output_dst, 17, sport, dport, marker)
+        output_id = fragment_id & 0xffff
+        output_header = ipv4_header(
+            output_src, output_dst, 17, len(output_segment),
+            identification=output_id, ttl=63)
+        assert checksum(output_header) == 0
+        checks.extend((
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "tx", "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ipv6",
+                            "version_class": 0x60000000,
+                            "payload_length": (len(fragment_header)
+                                               + len(source_segment)),
+                            "next_header": 44, "hop_limit": 63,
+                            "src": src, "dst": dst,
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(
+                             fragment_header + source_segment)},
+                    ],
+                },
+            },
+            {
+                "count": 1,
+                "packet": {
+                    "direction": "rx", "valid_checksums": True,
+                    "layers": [
+                        {
+                            "layertype": "Ip", "version": 4,
+                            "ihl": 5, "tos": 0,
+                            "len": 20 + len(output_segment),
+                            "id": output_id,
+                            "flags": unfragmented_flags,
+                            "ttl": 63, "proto": 17,
+                            "chksum": struct.unpack_from(
+                                "!H", output_header, 10)[0],
+                            "src": output_src, "dst": output_dst,
+                            "options": [],
+                        },
+                        {
+                            "layertype": "Udp", "sport": sport,
+                            "dport": dport, "len": len(output_segment),
+                            "chksum": struct.unpack_from(
+                                "!H", output_segment, 6)[0],
+                        },
+                        {"layertype": "raw",
+                         "data_prefix": list(marker)},
+                    ],
+                },
+            },
+        ))
+        return packet
+
+    source_packets = (
+        ipv4_case(
+            shared_local_v4, shared_remote_v4,
+            winner_local_v6, winner_remote_v6,
+            64101, 65101, b"REPLAY-SRC-OVERLAP", 0x6a01, 1000000),
+        ipv6_atomic_case(
+            shadow_remote_v6, shadow_local_v6,
+            shared_remote_v4, shared_local_v4,
+            64102, 65102, b"REPLAY-SRC-SHADOW", 0x6a020001, 1100000),
+        ipv4_case(
+            distinct_local_v4, distinct_remote_v4,
+            distinct_local_v6, distinct_remote_v6,
+            64103, 65103, b"REPLAY-SRC-DISTINCT", 0x6a03, 1200000),
+    )
+    replayed_packets = (
+        ipv4_case(
+            shared_local_v4, shared_remote_v4,
+            winner_local_v6, winner_remote_v6,
+            64201, 65201, b"REPLAY-DST-OVERLAP", 0x6b01, 1300000),
+        ipv6_atomic_case(
+            shadow_remote_v6, shadow_local_v6,
+            shared_remote_v4, shared_local_v4,
+            64202, 65202, b"REPLAY-DST-SHADOW", 0x6b020001, 1400000),
+        ipv4_case(
+            distinct_local_v4, distinct_remote_v4,
+            distinct_local_v6, distinct_remote_v6,
+            64203, 65203, b"REPLAY-DST-DISTINCT", 0x6b03, 1500000),
+    )
+
+    PROC_REPLAY_DIR.mkdir(parents=True, exist_ok=True)
+    (PROC_REPLAY_DIR / "replay.run").write_text(replay_script)
+    for name, packets in (("source", source_packets),
+                          ("replayed", replayed_packets)):
+        (PROC_REPLAY_DIR / f"inject-valid-{name}.jsonl").write_text(
+            "".join(json.dumps(packet, separators=(",", ":")) + "\n"
+                    for packet in packets))
+    PROC_REPLAY_EXPECTED.write_text(
+        "# packet assertion\n"
+        + json.dumps({"expected_rx_count": 6, "checks": checks},
+                     separators=(",", ":")) + "\n")
+
+
 def ipv6_atomic_tcp_fragment_packet(identification, dport, timestamp_us):
     tcp = struct.pack(
         "!HHIIBBHHH", 12345, dport, 0, 0, 0x50, 2, 8192, 0, 0)
@@ -2392,6 +2663,7 @@ def main():
     generate_map_zero_prefix()
     generate_remove_semantic_rule()
     generate_proc_config_long()
+    generate_proc_replay()
     generate_rfc6052_prefix_lengths()
     generate_icmp_embedded_headers()
     generate_icmp_quote_output_limit()

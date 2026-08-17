@@ -1,0 +1,4 @@
+add nat46dev
+config nat46dev local.v4 0.0.0.0/0 local.v6 ::/0 local.style NONE local.ea-len 0 local.psid-offset 0 local.fmr-flag 0 remote.v4 0.0.0.0/0 remote.v6 ::/0 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0
+insert nat46dev local.v4 192.0.2.61/32 local.v6 2001:db8:1111:2222:3333:4444:5555:6666/128 local.style NONE local.ea-len 7 local.psid-offset 5 local.fmr-flag 1 remote.v4 198.51.100.71/32 remote.v6 2001:db8:aaaa:bbbb:cccc:dddd:eeee:2222/128 remote.style NONE remote.ea-len 9 remote.psid-offset 6 remote.fmr-flag 1 debug 0
+

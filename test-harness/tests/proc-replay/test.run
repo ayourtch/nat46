@@ -1,0 +1,31 @@
+# Build three ordered rules, exercise their winning and reachable paths, then
+# restore the complete dump line by line into a fresh device of the same name.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+ip -6 route add 2001:db8:b::/48 dev nat46dev
+
+echo config nat46dev local.v4 192.0.2.30/32 local.v6 2001:db8:c::30/128 local.style NONE local.ea-len 3 local.psid-offset 2 local.fmr-flag 0 remote.v4 198.51.100.40/32 remote.v6 2001:db8:c::40/128 remote.style NONE remote.ea-len 4 remote.psid-offset 3 remote.fmr-flag 1 debug 7 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.0.2.10/32 local.v6 2001:db8:b::10/128 local.style NONE local.ea-len 5 local.psid-offset 4 local.fmr-flag 1 remote.v4 198.51.100.20/32 remote.v6 2001:db8:b::20/128 remote.style NONE remote.ea-len 6 remote.psid-offset 5 remote.fmr-flag 0 debug 7 > /proc/net/nat46/control
+echo insert nat46dev local.v4 192.0.2.10/32 local.v6 2001:db8:a::10/128 local.style NONE local.ea-len 7 local.psid-offset 6 local.fmr-flag 0 remote.v4 198.51.100.20/32 remote.v6 2001:db8:a::20/128 remote.style NONE remote.ea-len 8 remote.psid-offset 7 remote.fmr-flag 1 debug 7 > /proc/net/nat46/control
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/proc-replay-source.txt
+inject /mnt/host/test-harness/tests/proc-replay/inject-valid-source.jsonl tap0 > /mnt/host/test-harness/test-data/captured/proc-replay-inject-valid-source.log
+capture stop all
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/proc-replay-roundtrip-before.txt
+cat /mnt/host/test-harness/test-data/captured/proc-replay-roundtrip-before.txt > /mnt/host/test-harness/test-data/captured/proc-replay-config.txt
+echo del nat46dev > /proc/net/nat46/control
+
+run /mnt/host/test-harness/tests/proc-replay/replay.run
+echo Replay complete: 5 line writes > /mnt/host/test-harness/test-data/captured/proc-replay-runtime.txt
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+ip -6 route add 2001:db8:b::/48 dev nat46dev
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/proc-replay-replayed.txt
+inject /mnt/host/test-harness/tests/proc-replay/inject-valid-replayed.jsonl tap0 > /mnt/host/test-harness/test-data/captured/proc-replay-inject-valid-replayed.log
+capture stop all
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/proc-replay-roundtrip-after.txt
+cat /mnt/host/test-harness/test-data/captured/proc-replay-source.txt > /mnt/host/test-harness/test-data/captured/proc-replay.jsonl
+echo del nat46dev > /proc/net/nat46/control
