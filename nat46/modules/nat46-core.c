@@ -247,6 +247,22 @@ static int validate_rule_config(nat46_xlate_rule_t *rule) {
   int v4_suffix_len;
   int psid_len;
 
+  if (rule->style == NAT46_XLATE_RFC6052) {
+    switch (rule->v6_pref_len) {
+      case 32:
+      case 40:
+      case 48:
+      case 56:
+      case 64:
+      case 96:
+        return 0;
+      default:
+        printk("[nat46] invalid RFC6052 rule: v6 prefix length %d\n",
+               rule->v6_pref_len);
+        return -1;
+    }
+  }
+
   if (rule->style != NAT46_XLATE_MAP && rule->style != NAT46_XLATE_MAP0) {
     return 0;
   }
