@@ -1,0 +1,15 @@
+# MAP permits an IPv4 /0 rule when all 32 IPv4 address bits form the EA bits.
+# Exercise a nonzero address so a full-width mask cannot behave like /32.
+
+echo add nat46dev > /proc/net/nat46/control
+ifconfig nat46dev up
+ip route add 0.0.0.0/0 dev nat46dev
+ip -6 route add 2001:db8:100:200:c000:221:221:0/128 dev nat46dev
+echo config nat46dev local.v4 0.0.0.0/0 local.v6 2001:db8:100:200::/64 local.style MAP local.ea-len 32 local.psid-offset 0 local.fmr-flag 0 remote.v4 8.8.8.8/32 remote.v6 2001:4860:4860::8888/128 remote.style NONE remote.ea-len 0 remote.psid-offset 0 remote.fmr-flag 0 debug 0 > /proc/net/nat46/control
+cat /proc/net/nat46/control > /mnt/host/test-harness/test-data/captured/map-zero-prefix-config.txt
+
+capture start nat46dev /mnt/host/test-harness/test-data/captured/map-zero-prefix.jsonl
+inject /mnt/host/test-harness/tests/map-zero-prefix/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/map-zero-prefix-inject.log
+capture stop all
+
+echo del nat46dev > /proc/net/nat46/control

@@ -32,3 +32,4 @@ rfc6052-canonical
 icmp-quote-echo-checksum
 config-ranges
 rfc6052-prefix-lengths
+map-zero-prefix
