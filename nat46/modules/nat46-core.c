@@ -129,6 +129,9 @@ static int try_parse_ipv6_prefix(struct in6_addr *pref, int *pref_len, char *arg
     *arg_plen++ = 0;
     if (pref_len) {
       *pref_len = simple_strtol(arg_plen, NULL, 10);
+      if ((*pref_len < 0) || (*pref_len > 128)) {
+        return -1;
+      }
     }
   }
   err = (1 != in6_pton(arg, -1, (u8 *)pref, '\0', NULL));
@@ -142,6 +145,9 @@ static int try_parse_ipv4_prefix(u32 *v4addr, int *pref_len, char *arg) {
     *arg_plen++ = 0;
     if (pref_len) {
       *pref_len = simple_strtol(arg_plen, NULL, 10);
+      if ((*pref_len < 0) || (*pref_len > 32)) {
+        return -1;
+      }
     }
   }
   err = (1 != in4_pton(arg, -1, (u8 *)v4addr, '/', NULL));
@@ -166,8 +172,14 @@ static int try_parse_rule_arg(nat46_xlate_rule_t *rule, char *arg_name, char **p
     err = try_parse_ipv4_prefix(&rule->v4_pref, &rule->v4_pref_len, val);
   } else if (0 == strcmp(arg_name, "ea-len")) {
     rule->ea_len = simple_strtol(val, NULL, 10);
+    if ((rule->ea_len < 0) || (rule->ea_len > 48)) {
+      err = -1;
+    }
   } else if (0 == strcmp(arg_name, "psid-offset")) {
     rule->psid_offset = simple_strtol(val, NULL, 10);
+    if ((rule->psid_offset < 0) || (rule->psid_offset > 16)) {
+      err = -1;
+    }
   } else if (0 == strcmp(arg_name, "style")) {
     if (0 == strcmp("MAP", val)) {
       rule->style = NAT46_XLATE_MAP;
