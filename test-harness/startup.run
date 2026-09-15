@@ -1,18 +1,20 @@
-# This file is executed after the host filesystem is mounted
-# Modify this file to customize your test environment
+# This file is executed after the host filesystem is mounted.
 
-# List root directory to verify mount
 ls /
 
-# Load additional kernel modules
-insmod /nf_defrag_ipv6.ko
+# Keep the repository mount read-only. Overlay only the two narrow output
+# directories with separate writable 9p exports.
+mount -t 9p host-captured /mnt/host/test-harness/test-data/captured -o trans=virtio,version=9p2000.L
+mount -t 9p host-coverage /mnt/host/test-harness/test-data/coverage -o trans=virtio,version=9p2000.L
+
+# The host generates this file from the selected kernel dependencies.
+run /load-dependencies.run
 insmod /nat46.ko
 
 ifconfig lo 127.0.0.1 netmask 255.0.0.0
 ifconfig lo ::1/128
 ifconfig lo up
 
-# Setup TAP interfaces
 mknod /dev/net/tun c 10 200
 tap add tap0
 ifconfig tap0 192.168.1.1 netmask 255.255.255.0
@@ -23,29 +25,32 @@ ifconfig tap1 2001:db8::1/64
 ifconfig tap1 up
 ifconfig
 
-# set the mac addresses
 ifconfig tap0 hw ether 0E:86:3C:CD:51:CA
 ifconfig tap1 hw ether 00:11:22:33:44:55
 ifconfig nat46dev up
 
-# add phantom hosts
+fakehost add tap0 192.168.1.100 mac 52:55:0A:00:02:02
 fakehost add tap1 fe80::1 icmp router
 fakehost add tap1 2001:db8::2 icmp router
 fakehost add tap1 fe80::2 icmp
-# ping ipv6 default gateway global
-# ping 2001:db8::2
 ping fe80::1%tap1
 
 ip -6 route add ::/0 via fe80::1 dev tap1
 ifconfig tap0 up promisc
 
-# start droptrace for diagnostics
 mkdir -p /sys/kernel
 droptrace start
 
 echo 1 >/proc/sys/net/ipv4/ip_forward
 echo 1 >/proc/sys/net/ipv6/conf/all/forwarding
 
-run /mnt/host/test-harness/tests/basic/test.run
+# The host validates test-plan and writes only the selected run commands here.
+run /test-plan.run
 
+# This is a no-op outside GCOV. The GCOV stage replaces it with exact copy
+# commands for the module's current .gcno set before boot.
+run /mnt/host/test-harness/coverage-collect.run
 
+# The host removes this marker before each boot and accepts only this fresh
+# value after QEMU exits.
+echo complete > /mnt/host/test-harness/test-data/captured/run-complete

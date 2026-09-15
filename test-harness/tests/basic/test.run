@@ -9,7 +9,7 @@ echo insert nat46dev local.v4 192.168.1.101/32 local.v6 2001:db8:1:1::2/128 loca
 capture start nat46dev /mnt/host/test-harness/test-data/captured/basic.jsonl
 
 # inject packets
-inject /mnt/host/test-harness/tests/basic/inject-tap0.jsonl tap0
+inject /mnt/host/test-harness/tests/basic/inject-tap0.jsonl tap0 > /mnt/host/test-harness/test-data/captured/basic-inject.log
 
 # remove the nat46 device
 echo del nat46dev >/proc/net/nat46/control
@@ -18,4 +18,3 @@ capture stop all
 
 echo nat46 packets:
 cat /mnt/host/test-harness/test-data/captured/basic.jsonl
-

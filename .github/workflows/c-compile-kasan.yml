@@ -1,0 +1,131 @@
+on:
+  workflow_call:
+    inputs:
+      test_filter:
+        required: false
+        type: string
+        default: ''
+      qemu_mem:
+        required: false
+        type: string
+        default: '1G'
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Only run tests whose directory name contains this substring (comma-separated). Leave empty to run the full suite.'
+        required: false
+        default: ''
+      qemu_mem:
+        description: 'QEMU memory size (e.g. 1G). KASAN kernels need at least 1G.'
+        required: false
+        default: '1G'
+name: KASAN CI
+
+permissions:
+  contents: read
+
+jobs:
+  kasan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential libncurses-dev flex bison libssl-dev \
+          libelf-dev bc cpio gzip jq kmod qemu-system-x86 wget linux-source \
+          coreutils python3 xz-utils zstd
+    - name: Determine kernel source version
+      id: kernel-src-ver
+      run: |
+        set -- /usr/src/linux-source-*.tar.*
+        if [ "$#" -ne 1 ] || [ ! -e "$1" ]; then
+          echo "Error: expected exactly one Linux source archive below /usr/src" >&2
+          exit 1
+        fi
+        SRC_TARBALL=$1
+        SRC_VER=$(basename "$SRC_TARBALL" | sed 's/linux-source-//' | sed 's/\.tar\..*//')
+        SOURCE_SHA256=$(sha256sum "$SRC_TARBALL" | cut -d' ' -f1)
+        COMPILER_ID=$(gcc --version | head -1 | sha256sum | cut -d' ' -f1)
+        CACHE_IDENTITY=$(
+          {
+            sha256sum "$SRC_TARBALL" | cut -d' ' -f1
+            sha256sum "$GITHUB_WORKSPACE/test-harness/kasan-config.sh" | cut -d' ' -f1
+            gcc --version
+          } | sha256sum | cut -d' ' -f1
+        )
+        {
+          echo "src_tarball=$SRC_TARBALL"
+          echo "version=$SRC_VER"
+          echo "source_sha256=$SOURCE_SHA256"
+          echo "compiler_id=$COMPILER_ID"
+          echo "cache_identity=$CACHE_IDENTITY"
+        } >> "$GITHUB_OUTPUT"
+        echo "Kernel source version: $SRC_VER"
+    - name: Prepare kernel source directory
+      run: |
+        sudo mkdir -p /opt/kasan-kernel
+        sudo chown "$(id -u):$(id -g)" /opt/kasan-kernel
+    - name: Restore cached KASAN kernel
+      id: cache-kernel
+      uses: actions/cache@v4
+      with:
+        path: /opt/kasan-kernel
+        key: kasan-kernel-${{ runner.os }}-${{ runner.arch }}-${{ steps.kernel-src-ver.outputs.source_sha256 }}-${{ steps.kernel-src-ver.outputs.compiler_id }}-${{ hashFiles('test-harness/kasan-config.sh') }}
+    - name: Check cache validity
+      id: cache-valid
+      run: |
+        if [ -s /opt/kasan-kernel/bzImage ] &&
+           [ -s /opt/kasan-kernel/.kernel-version ] &&
+           [ -d /opt/kasan-kernel/src ] &&
+           [ "$(cat /opt/kasan-kernel/.cache-identity 2>/dev/null)" = "${{ steps.kernel-src-ver.outputs.cache_identity }}" ]; then
+          echo "valid=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "valid=false" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Build KASAN kernel
+      if: steps.cache-kernel.outputs.cache-hit != 'true' || steps.cache-valid.outputs.valid != 'true'
+      run: |
+        set -eux
+        cd /opt/kasan-kernel
+        SRC_TARBALL="${{ steps.kernel-src-ver.outputs.src_tarball }}"
+        rm -rf src
+        mkdir src
+        cd src
+        tar xaf "$SRC_TARBALL" --strip-components=1
+        . "$GITHUB_WORKSPACE/test-harness/kasan-config.sh"
+        make -j"$(nproc)" bzImage modules
+        KERNEL_VER=$(make -s kernelrelease)
+        cp arch/x86/boot/bzImage /opt/kasan-kernel/bzImage
+        echo "$KERNEL_VER" > /opt/kasan-kernel/.kernel-version
+        echo "${{ steps.kernel-src-ver.outputs.version }}" > /opt/kasan-kernel/.src-version
+        echo "${{ steps.kernel-src-ver.outputs.cache_identity }}" > /opt/kasan-kernel/.cache-identity
+    - name: Install modules and set kernel version
+      run: |
+        set -eux
+        KERNEL_VER=$(cat /opt/kasan-kernel/.kernel-version)
+        echo "KERNEL_VERSION=${KERNEL_VER}" >> "$GITHUB_ENV"
+        echo "Kernel version: ${KERNEL_VER}"
+        sudo make -C /opt/kasan-kernel/src modules_install
+        sudo mkdir -p /boot
+        sudo cp /opt/kasan-kernel/bzImage "/boot/vmlinuz-${KERNEL_VER}"
+    - name: Build NAT46 module against KASAN kernel
+      run: |
+        set -eux
+        cd nat46/modules
+        NAT46_VERSION=ci KCPPFLAGS=-Werror make -C "/lib/modules/${KERNEL_VERSION}/build" M="$(pwd)" modules
+        ls -la nat46.ko
+    - name: Run test harness with KASAN kernel
+      env:
+        QEMU_MEM: ${{ inputs.qemu_mem || '1G' }}
+        QEMU_TIMEOUT: 90m
+        TEST_FILTER: ${{ inputs.test_filter }}
+        KASAN_MODE: 1
+      run: |
+        set -eux
+        cd test-harness
+        ./run-test-harness

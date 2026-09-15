@@ -1,26 +1,88 @@
 on:
-  - push
-  - pull_request
-  - workflow_dispatch
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Only run tests whose name contains this substring (comma-separated).'
+        required: false
+        default: ''
 
 name: C/C++ CI prototype
-  
+
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      run_gcov: ${{ steps.ci-stages.outputs.gcov }}
+      run_kasan: ${{ steps.ci-stages.outputs.kasan }}
     steps:
     - uses: actions/checkout@v4
-    - name: build the NAT46 module
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Select downstream CI stages
+      id: ci-stages
+      env:
+        BEFORE_SHA: ${{ github.event.before }}
+        HEAD_SHA: ${{ github.sha }}
+      run: |
+        set -eu
+        case "$GITHUB_EVENT_NAME" in
+          schedule)
+            printf 'gcov=true\nkasan=true\n' >> "$GITHUB_OUTPUT"
+            ;;
+          workflow_dispatch|pull_request)
+            printf 'gcov=false\nkasan=false\n' >> "$GITHUB_OUTPUT"
+            ;;
+          push)
+            zero_sha=0000000000000000000000000000000000000000
+            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "$zero_sha" ] ||
+               ! git cat-file -e "$BEFORE_SHA^{commit}"; then
+              printf 'gcov=true\nkasan=true\n' >> "$GITHUB_OUTPUT"
+            else
+              git diff --name-only "$BEFORE_SHA" "$HEAD_SHA" |
+                sh test-harness/bin/classify-ci-paths >> "$GITHUB_OUTPUT"
+            fi
+            ;;
+        esac
+    - name: Install dependencies
+      run: |
+        kernel_headers="linux-headers-$(uname -r)"
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cpio gzip jq kmod "$kernel_headers" \
+          qemu-system-x86 wget coreutils python3 xz-utils zstd
+    - name: Build the NAT46 module
       run: |
         cd nat46/modules
-        KCPPFLAGS='-DNAT46_VERSION=\"test\" -Werror' make
-    - name: Install kvm
-      run: |
-        sudo apt-get update
-        sudo apt-get install qemu-system-x86
-    - name: Install and run test harness
+        NAT46_VERSION=ci KCPPFLAGS=-Werror make
+    - name: Run the basic VM test
+      env:
+        TEST_FILTER: ${{ inputs.test_filter }}
+        QEMU_TIMEOUT: 30m
       run: |
         cd test-harness
         ./run-test-harness
 
+  gcov:
+    name: GCOV CI
+    needs: build
+    if: >-
+      ${{ github.event_name != 'pull_request' &&
+          needs.build.outputs.run_gcov == 'true' }}
+    uses: ./.github/workflows/c-compile-gcov.yml
 
+  kasan:
+    name: KASAN CI
+    needs: build
+    if: >-
+      ${{ github.event_name != 'pull_request' &&
+          needs.build.outputs.run_kasan == 'true' }}
+    uses: ./.github/workflows/c-compile-kasan.yml

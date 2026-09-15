@@ -1,0 +1,38 @@
+on:
+  workflow_dispatch:
+
+name: OpenWrt package
+
+permissions:
+  contents: read
+
+env:
+  OPENWRT_SDK: openwrt-sdk-25.12.5-x86-64_gcc-14.3.0_musl.Linux-x86_64
+  OPENWRT_SDK_SHA256: 0c8df0151a1e88feb7c03d694d61f6a18d51872815b7c811d76e2b77504d5e9c
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Install SDK dependencies
+      run: sudo apt-get update && sudo apt-get install -y zstd
+    - name: Download verified OpenWrt SDK
+      run: |
+        set -eux
+        archive="${OPENWRT_SDK}.tar.zst"
+        url="https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/${archive}"
+        wget -O "$archive" "$url"
+        printf '%s  %s\n' "$OPENWRT_SDK_SHA256" "$archive" | sha256sum -c -
+        mkdir openwrt-sdk
+        tar --zstd -xf "$archive" -C openwrt-sdk --strip-components=1
+    - name: Build kmod-nat46 package
+      run: |
+        set -eux
+        cp -a nat46 openwrt-sdk/package/nat46
+        make -C openwrt-sdk defconfig
+        make -C openwrt-sdk package/nat46/compile V=s
+        find openwrt-sdk/bin -type f -name 'kmod-nat46*.apk' -print -quit | grep .

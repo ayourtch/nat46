@@ -1,105 +1,216 @@
 #!/bin/bash
-set -eux
+set -euxo pipefail
 
-# latest tag for https://github.com/ayourtch/nat46-kvm-test-harness/
-MYINIT_VERSION="v0.0.10"
+MYINIT_VERSION="v0.0.16"
+MYINIT_SHA256="${MYINIT_SHA256:-8a101745dce630e9f419025f089ddc61654dab96c5556887e3e5aa04b47beeae}"
+MYINIT_PATH="${MYINIT_PATH:-myinit}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$SCRIPT_DIR"
+
+for required_command in cpio find gzip jq python3 qemu-system-x86_64 sha256sum timeout wget; do
+  if ! command -v "$required_command" >/dev/null 2>&1; then
+    echo "Error: required host command is missing: $required_command" >&2
+    exit 1
+  fi
+done
 
 find_kernel_and_modules() {
-    local kernel_version=$(uname -r)
-    
-    # Potential kernel paths
-    local potential_kernel_paths=(
-        "/boot/vmlinuz-${kernel_version}"
-        "/boot/vmlinux-${kernel_version}"
-        "/boot/linux-${kernel_version}"
-    )
+  local kernel_version="${KERNEL_VERSION:-$(uname -r)}"
+  local kernel_candidates=(
+    "/boot/vmlinuz-${kernel_version}"
+    "/boot/vmlinux-${kernel_version}"
+    "/boot/linux-${kernel_version}"
+  )
+  local module_candidates=(
+    "/lib/modules/${kernel_version}"
+    "/usr/lib/modules/${kernel_version}"
+    "/usr/local/lib/modules/${kernel_version}"
+  )
+  local candidate
 
-    # Potential module path locations
-    local potential_module_paths=(
-        "/lib/modules/${kernel_version}"
-        "/usr/lib/modules/${kernel_version}"
-        "/usr/local/lib/modules/${kernel_version}"
-    )
-
-    local kernel_file=""
-    for path in "${potential_kernel_paths[@]}"; do
-        if [ -f "$path" ]; then
-            kernel_file="$path"
-            break
-        fi
+  KERNEL_FILE="${KERNEL_FILE:-}"
+  if [ -z "$KERNEL_FILE" ]; then
+    for candidate in "${kernel_candidates[@]}"; do
+      if [ -f "$candidate" ]; then
+        KERNEL_FILE="$candidate"
+        break
+      fi
     done
+  fi
 
-    local module_path=""
-    for path in "${potential_module_paths[@]}"; do
-        if [ -d "$path" ]; then
-            module_path="$path"
-            break
-        fi
+  KERNEL_MODULE_PATH="${KERNEL_MODULE_PATH:-}"
+  if [ -z "$KERNEL_MODULE_PATH" ]; then
+    for candidate in "${module_candidates[@]}"; do
+      if [ -d "$candidate" ]; then
+        KERNEL_MODULE_PATH="$candidate"
+        break
+      fi
     done
+  fi
 
-    if [ -z "$kernel_file" ]; then
-        echo "Error: Could not find kernel file for version ${kernel_version}" >&2
-        return 1
-    fi
+  if [ -z "$KERNEL_FILE" ]; then
+    echo "Error: could not find the kernel image for ${kernel_version}" >&2
+    return 1
+  fi
+  if [ -z "$KERNEL_MODULE_PATH" ]; then
+    echo "Error: could not find the module directory for ${kernel_version}" >&2
+    return 1
+  fi
 
-    if [ -z "$module_path" ]; then
-        echo "Error: Could not find module directory for version ${kernel_version}" >&2
-        return 1
-    fi
-
-    # Export environment variables
-    export KERNEL_FILE="$kernel_file"
-    export KERNEL_MODULE_PATH="$module_path"
-
-    # Print out for verification
-    echo "Kernel File: $KERNEL_FILE"
-    echo "Kernel Module Path: $KERNEL_MODULE_PATH"
+  export KERNEL_FILE KERNEL_MODULE_PATH
+  echo "Kernel file: $KERNEL_FILE"
+  echo "Kernel module path: $KERNEL_MODULE_PATH"
 }
 
 find_kernel_and_modules
 
-# download myinit - if doing local tests, feel free to make a symlink
-[ -e myinit ] || (wget https://github.com/ayourtch/nat46-kvm-test-harness/releases/download/${MYINIT_VERSION}/myinit && chmod +x myinit)
+MYINIT_DOWNLOAD=""
+cleanup_download() {
+  if [ -n "$MYINIT_DOWNLOAD" ]; then
+    rm -f -- "$MYINIT_DOWNLOAD"
+  fi
+}
+trap cleanup_download EXIT
 
-# build the initrd
-rm -rf initrd && mkdir initrd
-find ${KERNEL_MODULE_PATH} -name "netfs.ko*" -exec cp {} initrd/ \;
-find ${KERNEL_MODULE_PATH} -name "9pnet.ko*" -exec cp {} initrd/ \;
-find ${KERNEL_MODULE_PATH} -name "9pnet_virtio.ko*" -exec cp {} initrd/ \;
-find ${KERNEL_MODULE_PATH} -name "9p.ko*" -exec cp {} initrd/ \;
-find ${KERNEL_MODULE_PATH} -name "nf_defrag_ipv6.ko*" -exec cp {} initrd/ \;
+if [ ! -e "$MYINIT_PATH" ]; then
+  MYINIT_DOWNLOAD="myinit.download.$$"
+  wget -O "$MYINIT_DOWNLOAD" \
+    "https://github.com/ayourtch/nat46-kvm-test-harness/releases/download/${MYINIT_VERSION}/myinit"
+  if ! printf '%s  %s\n' "$MYINIT_SHA256" "$MYINIT_DOWNLOAD" | sha256sum -c -; then
+    echo "Error: downloaded myinit failed SHA-256 verification" >&2
+    exit 1
+  fi
+  chmod +x "$MYINIT_DOWNLOAD"
+  mv -- "$MYINIT_DOWNLOAD" "$MYINIT_PATH"
+  MYINIT_DOWNLOAD=""
+fi
+if ! printf '%s  %s\n' "$MYINIT_SHA256" "$MYINIT_PATH" | sha256sum -c -; then
+  echo "Error: local myinit failed SHA-256 verification" >&2
+  exit 1
+fi
 
-# copy the nat46 module from the repo
-find .. -name nat46.ko -exec cp {} initrd/ \;
+SELECTED_OUTPUT=$(bin/select-tests tests test-plan "${TEST_FILTER:-}")
+SELECTED_TESTS=()
+while IFS= read -r test_name; do
+  SELECTED_TESTS+=("$test_name")
+done <<< "$SELECTED_OUTPUT"
+echo "Selected ${#SELECTED_TESTS[@]} test(s): ${SELECTED_TESTS[*]}"
 
-cp myinit initrd/init
-( cd initrd/ && find . | cpio -o -H newc ) | gzip > initrd.gz
+mkdir -p test-data/captured test-data/coverage
+for test_name in "${SELECTED_TESTS[@]}"; do
+  if [ ! -s "test-data/expected/${test_name}.jsonl" ]; then
+    echo "Error: expected result is missing or empty for ${test_name}" >&2
+    exit 1
+  fi
+  rm -f -- "test-data/captured/${test_name}.jsonl"
+  rm -f -- "test-data/captured/${test_name}-inject.log"
+done
+rm -f -- test-data/captured/run-complete
 
-export HOST_SRC_PATH=$(git rev-parse --show-toplevel)
+rm -rf -- initrd
+mkdir initrd
+for module_name in netfs 9pnet 9pnet_virtio 9p nf_defrag_ipv6; do
+  bin/copy-kernel-module "$KERNEL_MODULE_PATH" "$module_name" \
+    "initrd/${module_name}.ko"
+done
 
-[ -f my-kernel ] || (sudo cp ${KERNEL_FILE} my-kernel && sudo chmod 644 my-kernel)
+NAT46_MODULE_PATH="${NAT46_MODULE_PATH:-$REPO_ROOT/nat46/modules/nat46.ko}"
+if [ ! -s "$NAT46_MODULE_PATH" ]; then
+  echo "Error: freshly built NAT46 module is missing or empty: $NAT46_MODULE_PATH" >&2
+  exit 1
+fi
+cp -- "$NAT46_MODULE_PATH" initrd/nat46.ko
 
-kvm -kernel my-kernel \
+: > initrd/load-dependencies.run
+if [ -f initrd/nf_defrag_ipv6.ko ]; then
+  printf 'insmod /nf_defrag_ipv6.ko\n' > initrd/load-dependencies.run
+fi
+: > initrd/test-plan.run
+for test_name in "${SELECTED_TESTS[@]}"; do
+  printf 'run /mnt/host/test-harness/tests/%s/test.run\n' "$test_name" \
+    >> initrd/test-plan.run
+done
+
+cp -- "$MYINIT_PATH" initrd/init
+(
+  cd initrd
+  find . -print | cpio -o -H newc
+) | gzip > initrd.gz
+
+HOST_SRC_PATH="$REPO_ROOT"
+HOST_CAPTURE_PATH="$SCRIPT_DIR/test-data/captured"
+HOST_COVERAGE_PATH="$SCRIPT_DIR/test-data/coverage"
+export HOST_SRC_PATH HOST_CAPTURE_PATH HOST_COVERAGE_PATH
+
+KERNEL_STAGING="my-kernel.$$"
+if [ "$(id -u)" -eq 0 ]; then
+  cp -- "$KERNEL_FILE" "$KERNEL_STAGING"
+  chmod 644 "$KERNEL_STAGING"
+else
+  sudo cp -- "$KERNEL_FILE" "$KERNEL_STAGING"
+  sudo chmod 644 "$KERNEL_STAGING"
+fi
+mv -f -- "$KERNEL_STAGING" my-kernel
+
+QEMU_MEM="${QEMU_MEM:-512M}"
+QEMU_TIMEOUT="${QEMU_TIMEOUT:-30m}"
+KERNEL_APPEND="console=hvc0 console=ttyS0 panic_on_oops=1 panic=1"
+QEMU_ARGS=(-no-reboot)
+if [ -w /dev/kvm ]; then
+  QEMU_ARGS+=(-enable-kvm)
+else
+  echo "Warning: /dev/kvm is not accessible; using software emulation"
+fi
+if [ -n "${GCOV_MODE:-}" ]; then
+  KERNEL_APPEND="$KERNEL_APPEND gcov_collect=1"
+fi
+if [ -n "${KASAN_MODE:-}" ]; then
+  KERNEL_APPEND="$KERNEL_APPEND panic_on_warn=1"
+fi
+
+QEMU_STATUS=0
+timeout --foreground --kill-after=30s "$QEMU_TIMEOUT" \
+  qemu-system-x86_64 "${QEMU_ARGS[@]}" \
+  -kernel my-kernel \
+  -m "$QEMU_MEM" \
   -initrd initrd.gz \
   -net nic,model=virtio,macaddr=52:54:00:12:34:56 \
-  -net user,hostfwd=tcp:127.0.0.1:4444-:22 \
-  -append 'console=hvc0' \
+  -net user,restrict=on \
+  -append "$KERNEL_APPEND" \
   -chardev stdio,id=stdio,mux=on,signal=off \
   -device virtio-serial-pci \
   -device virtconsole,chardev=stdio \
+  -serial chardev:stdio \
   -mon chardev=stdio \
   -display none \
-  -fsdev local,id=fs1,path=${HOST_SRC_PATH},security_model=none \
+  -fsdev "local,id=fs1,path=${HOST_SRC_PATH},security_model=none,readonly=on" \
   -s \
-  -device virtio-9p-pci,fsdev=fs1,mount_tag=host-code
+  -device virtio-9p-pci,fsdev=fs1,mount_tag=host-code \
+  -fsdev "local,id=fs-captured,path=${HOST_CAPTURE_PATH},security_model=none" \
+  -device virtio-9p-pci,fsdev=fs-captured,mount_tag=host-captured \
+  -fsdev "local,id=fs-coverage,path=${HOST_COVERAGE_PATH},security_model=none" \
+  -device virtio-9p-pci,fsdev=fs-coverage,mount_tag=host-coverage \
+  || QEMU_STATUS=$?
 
+if [ "$QEMU_STATUS" -ne 0 ]; then
+  if [ "$QEMU_STATUS" -eq 124 ]; then
+    echo "Error: QEMU exceeded its ${QEMU_TIMEOUT} host timeout" >&2
+  else
+    echo "Error: QEMU exited with status ${QEMU_STATUS}" >&2
+  fi
+  exit "$QEMU_STATUS"
+fi
 
-# collect the test names
-cd tests
-ALL_TESTS=$(ls)
-cd ..
+if ! grep -Fqx complete test-data/captured/run-complete; then
+  echo "Error: guest test run did not reach its completion marker" >&2
+  exit 1
+fi
 
-# verify that all the tests are matching the expectations
-for t in $ALL_TESTS; do
-  bin/check-test-result $t
+for test_name in "${SELECTED_TESTS[@]}"; do
+  if [ ! -s "test-data/captured/${test_name}.jsonl" ]; then
+    echo "Error: captured result is missing or empty for ${test_name}" >&2
+    exit 1
+  fi
+  bin/check-test-result "$test_name"
 done
