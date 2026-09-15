@@ -993,10 +993,19 @@ static int xlate_payload6_to4(nat46_instance_t *nat46, void *pv6, void *ptrans_h
   __u32 v4saddr, v4daddr;
   struct iphdr new_ipv4;
   struct iphdr *iph = &new_ipv4;
-  u16 proto = ip6h->nexthdr;
-  u16 ipid = 0;
-  u16 ipflags = htons(IP_DF);
-  int infrag_payload_len = ntohs(ip6h->payload_len);
+  u16 proto;
+  u16 ipid;
+  u16 ipflags;
+  int infrag_payload_len;
+
+  if (v6_len < IPV6HDRSIZE) {
+    nat46debug(0, "xlate_payload6_to4: inner packet too short (%d)", v6_len);
+    return 0;
+  }
+  proto = ip6h->nexthdr;
+  ipid = get_next_ip_id();
+  ipflags = htons(IP_DF);
+  infrag_payload_len = ntohs(ip6h->payload_len);
 
   /*
    * The packet is supposedly our own packet after translation - so the rules
