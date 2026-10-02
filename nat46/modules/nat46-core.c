@@ -18,6 +18,7 @@
 
 #include <linux/version.h>
 #include <net/route.h>
+#include <net/dsfield.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0)
 #include <net/ipv6.h>
 #else
