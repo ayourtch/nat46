@@ -120,7 +120,8 @@ static void nat46_netdev_setup(struct net_device *dev)
 	dev->mtu = 16384; /* iptables does reassembly. Rather than using ETH_DATA_LEN, let's try to get as much mileage as we can with the Linux stack */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6,12,0)
 	dev->features = NETIF_F_NETNS_LOCAL;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6,12,114) || \
+      (LINUX_VERSION_CODE >= KERNEL_VERSION(6,13,0) && LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0))
 	dev->netns_local = true;
 #else
 	dev->netns_immutable = true;
