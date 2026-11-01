@@ -1884,11 +1884,22 @@ static void ip6_update_csum(struct sk_buff * skb, struct ipv6hdr * ip6hdr, int d
 }
 
 static int ip4_input_not_interested(nat46_instance_t *nat46, struct iphdr *iph, struct sk_buff *old_skb) {
+  unsigned int header_len;
+  unsigned int packet_len;
+
   if (old_skb->protocol != htons(ETH_P_IP)) {
     nat46debug(3, "Not an IPv4 packet");
     return 1;
   }
-  if (old_skb->len < sizeof(struct iphdr) || old_skb->len < ntohs(iph->tot_len) || (iph->ihl << 2) < sizeof(struct iphdr) || iph->version != 4) {
+  if (old_skb->len < sizeof(struct iphdr)) {
+    nat46debug(3, "Invalid IPv4 packet or truncated header: %d", old_skb->len);
+    return 1;
+  }
+
+  header_len = iph->ihl << 2;
+  packet_len = ntohs(iph->tot_len);
+  if (iph->version != 4 || header_len < sizeof(struct iphdr) ||
+      header_len > packet_len || packet_len > old_skb->len) {
     nat46debug(3, "Invalid IPv4 packet or truncated payload: %d", old_skb->len);
     return 1;
   }
@@ -1948,6 +1959,8 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   int having_l4 = 0;
   int add_frag_header = 0;
   int v4packet_l3size = 0;
+  int v6packet_l3size = 0;
+  int header_delta = 0;
   int l4_payload_len = 0;
 
   struct ipv6hdr * hdr6;
@@ -2057,13 +2070,29 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   nf_reset_ct(new_skb);
 #endif
 
-  /* expand header (add 20 extra bytes at the beginning of sk_buff) */
-  pskb_expand_head(new_skb, IPV6HDRSIZE - v4packet_l3size + (add_frag_header?8:0), 0, GFP_ATOMIC);
-
-  skb_push(new_skb, IPV6HDRSIZE - v4packet_l3size + (add_frag_header?8:0)); /* push boundary by extra 20 bytes */
+  /*
+   * Replace the actual IPv4 header (which may carry options and be longer
+   * than the 20-byte minimum) with the IPv6 header. Size the change from the
+   * real header length: grow (expand+push) when the IPv6 header is bigger,
+   * shrink (pull) when the IPv4 header is bigger. Passing a negative value to
+   * the unsigned skb_push()/pskb_expand_head() would wrap to an enormous
+   * length and corrupt the skb, so the sign must be handled explicitly.
+   */
+  v6packet_l3size = IPV6HDRSIZE + (add_frag_header ? 8 : 0);
+  header_delta = v6packet_l3size - v4packet_l3size;
+  if (header_delta > 0) {
+    if (pskb_expand_head(new_skb, header_delta, 0, GFP_ATOMIC)) {
+      nat46debug(0, "[nat46] Could not expand v4 skb for IPv6 header");
+      kfree_skb(new_skb);
+      goto done;
+    }
+    skb_push(new_skb, header_delta);
+  } else if (header_delta < 0) {
+    skb_pull(new_skb, -header_delta);
+  }
 
   skb_reset_network_header(new_skb);
-  skb_set_transport_header(new_skb, IPV6HDRSIZE + (add_frag_header?8:0) ); /* transport (TCP/UDP/ICMP/...) header starts after 40 bytes */
+  skb_set_transport_header(new_skb, v6packet_l3size); /* transport header starts right after the IPv6 (and optional frag) header */
 
   hdr6 = ipv6_hdr(new_skb);
   memset(hdr6, 0, sizeof(*hdr6) + (add_frag_header?8:0));
