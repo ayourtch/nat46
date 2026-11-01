@@ -26,7 +26,10 @@ permissions:
 
 jobs:
   kasan:
-    runs-on: ubuntu-latest
+    # Pin to the Ubuntu image whose linux-source/toolchain the instrumented
+    # kernel build is known to succeed on; ubuntu-latest moved to Ubuntu 26 and
+    # the defconfig-based KASAN kernel build no longer compiles.
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
     - uses: actions/checkout@v4
