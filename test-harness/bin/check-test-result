@@ -3,9 +3,14 @@ set -eux
 TESTNAME=$1
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-rm -f /tmp/expected.jsonl
-rm -f /tmp/captured.jsonl
-rm -f /tmp/packet-assertion-result.json
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
+
+EXPECTED_JSONL="$TMP_DIR/expected.jsonl"
+CAPTURED_JSONL="$TMP_DIR/captured.jsonl"
+PACKET_ASSERTION_RES="$TMP_DIR/packet-assertion-result.json"
+PACKET_ASSERTION_SPEC="$TMP_DIR/packet-assertion.json"
+JQ_ASSERTION_FILE="$TMP_DIR/assertion.jq"
 
 # Predicate-based checks let security regressions assert only the relevant
 # packet properties (for example, "no translated rx packet") without baking
@@ -27,8 +32,8 @@ if [ -f "$INJECTION_INPUT" ]; then
 fi
 
 if [ "$ASSERTION_KIND" = "# packet assertion" ]; then
-  tail -n +2 test-data/expected/${TESTNAME}.jsonl > /tmp/packet-assertion.json
-  if ! jq -s --slurpfile spec /tmp/packet-assertion.json '
+  tail -n +2 test-data/expected/${TESTNAME}.jsonl > "$PACKET_ASSERTION_SPEC"
+  if ! jq -s --slurpfile spec "$PACKET_ASSERTION_SPEC" '
     def layer_matches($expected; $actual):
       (reduce ($expected | keys[] |
                select(. != "data_prefix" and . != "nonzero_fields")) as $key
@@ -90,17 +95,17 @@ if [ "$ASSERTION_KIND" = "# packet assertion" ]; then
       captured_packets: [$packets[] | packet_summary]
     }
   ' test-data/captured/${TESTNAME}.jsonl \
-      > /tmp/packet-assertion-result.json; then
+      > "$PACKET_ASSERTION_RES"; then
     echo "FAIL: could not evaluate structured packet assertion for ${TESTNAME}" >&2
     exit 1
   fi
-  if ! jq -e '.ok' /tmp/packet-assertion-result.json >/dev/null; then
+  if ! jq -e '.ok' "$PACKET_ASSERTION_RES" >/dev/null; then
     echo "FAIL: structured packet assertion failed for ${TESTNAME}" >&2
-    jq 'del(.ok)' /tmp/packet-assertion-result.json >&2
+    jq 'del(.ok)' "$PACKET_ASSERTION_RES" >&2
     exit 1
   fi
   if ! "$SCRIPT_DIR/validate-packet-checksums" \
-       test-data/captured/${TESTNAME}.jsonl /tmp/packet-assertion.json; then
+       test-data/captured/${TESTNAME}.jsonl "$PACKET_ASSERTION_SPEC"; then
     echo "FAIL: packet checksum assertion failed for ${TESTNAME}" >&2
     exit 1
   fi
@@ -124,11 +129,11 @@ case "$ASSERTION_KIND" in
         exit 1
         ;;
     esac
-    tail -n +2 test-data/expected/${TESTNAME}.jsonl > /tmp/assertion.jq
+    tail -n +2 test-data/expected/${TESTNAME}.jsonl > "$JQ_ASSERTION_FILE"
     ACTUAL_RX_COUNT=$(jq -s '[.[] | select(.direction == "rx")] | length' \
       test-data/captured/${TESTNAME}.jsonl)
     if [ "$ACTUAL_RX_COUNT" != "$EXPECTED_RX_COUNT" ] ||
-       ! jq -s -e -f /tmp/assertion.jq test-data/captured/${TESTNAME}.jsonl; then
+       ! jq -s -e -f "$JQ_ASSERTION_FILE" test-data/captured/${TESTNAME}.jsonl; then
     echo "FAIL: packet assertion failed for ${TESTNAME}" >&2
     jq -s '
       {
@@ -163,11 +168,11 @@ if [ "$(cat test-data/expected/${TESTNAME}.jsonl)" = "pass" ]; then
   exit 1
 fi
 
-if jq 'del(.timestamp_us)' < test-data/expected/${TESTNAME}.jsonl > /tmp/expected.jsonl 2>/dev/null; then
-  jq 'del(.timestamp_us)' < test-data/captured/${TESTNAME}.jsonl > /tmp/captured.jsonl
+if jq 'del(.timestamp_us)' < test-data/expected/${TESTNAME}.jsonl > "$EXPECTED_JSONL" 2>/dev/null; then
+  jq 'del(.timestamp_us)' < test-data/captured/${TESTNAME}.jsonl > "$CAPTURED_JSONL"
 else
-  cp test-data/expected/${TESTNAME}.jsonl /tmp/expected.jsonl
-  cp test-data/captured/${TESTNAME}.jsonl /tmp/captured.jsonl
+  cp test-data/expected/${TESTNAME}.jsonl "$EXPECTED_JSONL"
+  cp test-data/captured/${TESTNAME}.jsonl "$CAPTURED_JSONL"
 fi
 
-diff -c /tmp/expected.jsonl /tmp/captured.jsonl
+diff -c "$EXPECTED_JSONL" "$CAPTURED_JSONL"

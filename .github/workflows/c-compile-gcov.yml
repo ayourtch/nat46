@@ -181,6 +181,7 @@ jobs:
           echo "Error: GCOV result set is missing, empty, or unexpected" >&2
           exit 1
         fi
+        rm -f "$EXPECTED_GCDA" "$ACTUAL_GCDA"
         echo "Collected .gcda files:"
         ls -la "$COVERAGE_DIR/"
         for gcda in "$COVERAGE_DIR"/*.gcda; do

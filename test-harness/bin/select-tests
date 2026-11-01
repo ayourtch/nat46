@@ -27,7 +27,7 @@ def main() -> int:
 
     planned: list[str] = []
     seen: set[str] = set()
-    for line_number, raw_line in enumerate(plan_path.read_text().splitlines(), 1):
+    for line_number, raw_line in enumerate(plan_path.read_text(encoding="utf-8").splitlines(), 1):
         test_name = raw_line.strip()
         if not test_name or test_name.startswith("#"):
             continue

@@ -176,15 +176,19 @@ def validate(packet: dict) -> None:
     if transport == "Icmp":
         checked = segment
     elif network["layertype"] == "Ipv6":
+        proto_map = {"Tcp": 6, "Udp": 17, "Icmpv6": 58}
+        transport_proto = proto_map.get(transport, network["next_header"])
         pseudoheader = (ipaddress.IPv6Address(network["src"]).packed
                         + ipaddress.IPv6Address(network["dst"]).packed
                         + struct.pack("!I3xB", checksum_length,
-                                      network["next_header"]))
+                                      transport_proto))
         checked = pseudoheader + segment
     else:
+        proto_map = {"Tcp": 6, "Udp": 17}
+        transport_proto = proto_map.get(transport, network["proto"])
         pseudoheader = (ipaddress.IPv4Address(network["src"]).packed
                         + ipaddress.IPv4Address(network["dst"]).packed
-                        + struct.pack("!BBH", 0, network["proto"],
+                        + struct.pack("!BBH", 0, transport_proto,
                                       checksum_length))
         checked = pseudoheader + segment
     if checksum(checked) != 0:
@@ -199,8 +203,8 @@ def main() -> int:
     if len(sys.argv) != 3:
         print(f"usage: {sys.argv[0]} CAPTURE.jsonl SPEC.json", file=sys.stderr)
         return 2
-    packets = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
-    spec = json.loads(Path(sys.argv[2]).read_text())
+    packets = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+    spec = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     try:
         for check_index, check in enumerate(spec["checks"], 1):
             expected = check["packet"]

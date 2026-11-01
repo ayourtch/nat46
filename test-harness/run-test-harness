@@ -150,12 +150,13 @@ if [ "$(id -u)" -eq 0 ]; then
 else
   sudo cp -- "$KERNEL_FILE" "$KERNEL_STAGING"
   sudo chmod 644 "$KERNEL_STAGING"
+  sudo chown "$(id -u):$(id -g)" "$KERNEL_STAGING"
 fi
 mv -f -- "$KERNEL_STAGING" my-kernel
 
 QEMU_MEM="${QEMU_MEM:-512M}"
 QEMU_TIMEOUT="${QEMU_TIMEOUT:-30m}"
-KERNEL_APPEND="console=hvc0 console=ttyS0 panic_on_oops=1 panic=1"
+KERNEL_APPEND="console=hvc0 panic_on_oops=1 panic=1"
 QEMU_ARGS=(-no-reboot)
 if [ -w /dev/kvm ]; then
   QEMU_ARGS+=(-enable-kvm)
