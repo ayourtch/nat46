@@ -1,0 +1,152 @@
+#!/bin/bash
+set -euxo pipefail
+
+# run-kasan-ci — Build a KASAN kernel (with caching) and run the nat46 test harness.
+# Works on x86_64 Linux. Can be run locally or by CI.
+#
+# Usage:
+#   ./test-harness/run-kasan-ci
+#
+# Environment variables:
+#   KASAN_KERNEL_CACHE  — directory to cache the built kernel (default: $HOME/.cache/nat46-kasan)
+#   QEMU_MEM            — QEMU memory size (default: 1G)
+#   QEMU_TIMEOUT        — maximum QEMU runtime (default: 90m)
+#   KERNEL_VERSION      — override the kernel version to use (skip build)
+#   JOBS                — make -j jobs (default: $(nproc))
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+KASAN_KERNEL_CACHE="${KASAN_KERNEL_CACHE:-$HOME/.cache/nat46-kasan}"
+QEMU_MEM="${QEMU_MEM:-1G}"
+QEMU_TIMEOUT="${QEMU_TIMEOUT:-90m}"
+JOBS="${JOBS:-$(nproc)}"
+
+# ---------------------------------------------------------------------------
+# Step 1: Check dependencies
+# ---------------------------------------------------------------------------
+echo "=== Checking dependencies ==="
+
+MISSING=""
+for cmd in gcc make tar qemu-system-x86_64 wget sha256sum; do
+  command -v "$cmd" >/dev/null 2>&1 || MISSING="$MISSING $cmd"
+done
+
+if [ -n "$MISSING" ]; then
+  echo "Error: missing commands:$MISSING" >&2
+  echo "On Ubuntu/Debian, install with:" >&2
+  echo "  sudo apt-get install -y build-essential libncurses-dev flex bison libssl-dev \\" >&2
+  echo "    libelf-dev bc cpio kmod qemu-system-x86 wget linux-source" >&2
+  exit 1
+fi
+
+# Check for linux-source tarball
+set -- /usr/src/linux-source-*.tar.*
+if [ "$#" -ne 1 ] || [ ! -e "$1" ]; then
+  echo "Error: expected exactly one /usr/src/linux-source-*.tar.* archive" >&2
+  echo "Install with: sudo apt-get install -y linux-source" >&2
+  exit 1
+fi
+SRC_TARBALL=$1
+
+SRC_VER=$(basename "$SRC_TARBALL" | sed 's/linux-source-//' | sed 's/\.tar\..*//')
+CACHE_IDENTITY=$(
+  {
+    sha256sum "$SRC_TARBALL" | cut -d' ' -f1
+    sha256sum "$SCRIPT_DIR/kasan-config.sh" | cut -d' ' -f1
+    gcc --version
+  } | sha256sum | cut -d' ' -f1
+)
+echo "Kernel source: $SRC_VER (from $SRC_TARBALL)"
+
+# ---------------------------------------------------------------------------
+# Step 2: Build KASAN kernel (with caching)
+# ---------------------------------------------------------------------------
+KERNEL_VER="${KERNEL_VERSION:-}"
+
+if [ -z "$KERNEL_VER" ]; then
+  CACHE_MARKER="$KASAN_KERNEL_CACHE/.cache-identity"
+  echo "=== Checking for cached KASAN kernel ==="
+
+  if [ -s "$KASAN_KERNEL_CACHE/bzImage" ] &&
+     [ -s "$KASAN_KERNEL_CACHE/.kernel-version" ] &&
+     [ -d "$KASAN_KERNEL_CACHE/src" ] &&
+     [ -f "$CACHE_MARKER" ] &&
+     [ "$(cat "$CACHE_MARKER")" = "$CACHE_IDENTITY" ]; then
+    echo "Cache hit: KASAN kernel already built in $KASAN_KERNEL_CACHE"
+    KERNEL_VER=$(cat "$KASAN_KERNEL_CACHE/.kernel-version")
+  else
+    echo "Cache miss: building KASAN kernel in $KASAN_KERNEL_CACHE"
+    mkdir -p "$KASAN_KERNEL_CACHE"
+    rm -rf "$KASAN_KERNEL_CACHE/src"
+    mkdir -p "$KASAN_KERNEL_CACHE/src"
+    cd "$KASAN_KERNEL_CACHE/src"
+    tar xaf "$SRC_TARBALL" --strip-components=1
+
+    # Configure and build
+    . "$SCRIPT_DIR/kasan-config.sh"
+    make -j"$JOBS" bzImage modules
+
+    # Save artifacts
+    KERNEL_VER=$(make -s kernelrelease)
+    cp arch/x86/boot/bzImage "$KASAN_KERNEL_CACHE/bzImage"
+    echo "$KERNEL_VER" > "$KASAN_KERNEL_CACHE/.kernel-version"
+    echo "$SRC_VER" > "$KASAN_KERNEL_CACHE/.src-version"
+    echo "$CACHE_IDENTITY" > "$CACHE_MARKER"
+
+    cd "$REPO_ROOT"
+  fi
+  echo "KASAN kernel version: $KERNEL_VER"
+fi
+
+if [ -z "$KERNEL_VER" ]; then
+  echo "Error: could not determine KERNEL_VERSION" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3: Install modules and kernel (needs sudo)
+# ---------------------------------------------------------------------------
+echo "=== Installing modules and kernel ==="
+
+if [ ! -d "/lib/modules/$KERNEL_VER" ]; then
+  if [ -d "$KASAN_KERNEL_CACHE/src" ]; then
+    sudo make -C "$KASAN_KERNEL_CACHE/src" modules_install
+  else
+    echo "Error: kernel source not found at $KASAN_KERNEL_CACHE/src" >&2
+    exit 1
+  fi
+fi
+
+# Ensure the build symlink exists
+if [ ! -d "/lib/modules/$KERNEL_VER/build" ]; then
+  if [ -d "$KASAN_KERNEL_CACHE/src" ]; then
+    sudo ln -sf "$KASAN_KERNEL_CACHE/src" "/lib/modules/$KERNEL_VER/build"
+  fi
+fi
+
+# Copy bzImage to /boot if not there
+if [ ! -f "/boot/vmlinuz-$KERNEL_VER" ]; then
+  if [ -f "$KASAN_KERNEL_CACHE/bzImage" ]; then
+    sudo cp "$KASAN_KERNEL_CACHE/bzImage" "/boot/vmlinuz-$KERNEL_VER"
+  else
+    echo "Error: bzImage not found in cache" >&2
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step 4: Build the nat46 module against the KASAN kernel
+# ---------------------------------------------------------------------------
+echo "=== Building nat46 module ==="
+cd "$REPO_ROOT/nat46/modules"
+NAT46_VERSION=ci KCPPFLAGS=-Werror make -C "/lib/modules/$KERNEL_VER/build" M="$(pwd)" modules
+ls -la nat46.ko
+
+# ---------------------------------------------------------------------------
+# Step 5: Run the test harness
+# ---------------------------------------------------------------------------
+echo "=== Running test harness ==="
+cd "$SCRIPT_DIR"
+KASAN_MODE=1 KERNEL_VERSION="$KERNEL_VER" QEMU_MEM="$QEMU_MEM" \
+  QEMU_TIMEOUT="$QEMU_TIMEOUT" ./run-test-harness
