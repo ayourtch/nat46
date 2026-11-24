@@ -2076,7 +2076,7 @@ int nat46_ipv4_input(struct sk_buff *old_skb) {
   if (header_delta > 0) {
     if (pskb_expand_head(new_skb, header_delta, 0, GFP_ATOMIC)) {
       nat46debug(0, "[nat46] Could not expand v4 skb for IPv6 header");
-      kfree_skb(new_skb);
+      dev_kfree_skb_any(new_skb);
       goto done;
     }
     skb_push(new_skb, header_delta);
