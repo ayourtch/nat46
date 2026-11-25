@@ -17,6 +17,7 @@
 
 #include <linux/version.h>
 #include <linux/module.h>
+#include <linux/capability.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/ip.h>
@@ -133,6 +134,13 @@ static ssize_t nat46_proc_write(struct file *file, const char __user *buffer,
 	net = nat46_get_net();
 	if (!net)
 		return -EFAULT;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+	if (!ns_capable(net->user_ns, CAP_NET_ADMIN))
+#else
+	if (!capable(CAP_NET_ADMIN))
+#endif
+		return -EPERM;
 
 	buf = kmalloc(sizeof(char) * (count + 1), GFP_KERNEL);
 	if (!buf)
